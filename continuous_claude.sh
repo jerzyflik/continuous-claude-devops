@@ -420,12 +420,26 @@ continuous_claude_commit() {
     echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for GitHub to set up..." >&2
     sleep 5
     if ! wait_for_pr_checks "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$iteration_display"; then
-        echo "⚠️  $iteration_display PR checks failed or timed out" >&2
+        echo "⚠️  $iteration_display PR checks failed or timed out, closing PR..." >&2
+        gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --comment "Closing PR due to failed checks or timeout" >/dev/null 2>&1 || true
+        echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
         git checkout "$main_branch" >/dev/null 2>&1
+        git branch -D "$branch_name" >/dev/null 2>&1 || true
         return 1
     fi
 
     if ! merge_pr_and_cleanup "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$branch_name" "$iteration_display" "$main_branch"; then
+        # Check if PR is still open before closing (might have been merged but cleanup failed)
+        local pr_state=$(gh pr view "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+        if [ "$pr_state" = "OPEN" ]; then
+            echo "⚠️  $iteration_display Failed to merge PR, closing it..." >&2
+            gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --comment "Closing PR due to merge failure" >/dev/null 2>&1 || true
+        else
+            echo "⚠️  $iteration_display PR was merged but cleanup failed" >&2
+        fi
+        echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
+        git checkout "$main_branch" >/dev/null 2>&1
+        git branch -D "$branch_name" >/dev/null 2>&1 || true
         return 1
     fi
 
