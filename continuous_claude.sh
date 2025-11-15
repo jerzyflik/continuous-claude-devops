@@ -169,12 +169,17 @@ wait_for_pr_checks() {
             reviews_pending=true
         fi
 
-        # If we have checks that haven't started yet, wait
-        if [ "$check_count" -eq 0 ] && [ "$checks_json" != "" ]; then
-            echo "⏳ $iteration_display Waiting for checks to start..." >&2
-            sleep 60
-            iteration=$((iteration + 1))
-            continue
+        # If we have checks that haven't started yet, wait (but only for a limited time)
+        if [ "$check_count" -eq 0 ] && [ "$checks_json" != "" ] && [ "$checks_json" != "[]" ]; then
+            # Only wait for checks if we haven't been waiting too long
+            if [ "$iteration" -lt 3 ]; then
+                echo "⏳ $iteration_display Waiting for checks to start..." >&2
+                sleep 60
+                iteration=$((iteration + 1))
+                continue
+            else
+                echo "✅ $iteration_display No checks found after waiting, proceeding" >&2
+            fi
         fi
 
         # Check if everything is ready
