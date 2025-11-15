@@ -184,12 +184,12 @@ wait_for_pr_checks() {
             reviews_pending=true
         fi
         
-        if [ "$review_decision" != "null" ]; then
+        if [ -n "$review_decision" ] && [ "$review_decision" != "null" ]; then
             echo "   👁️  Review status: $review_decision" >&2
         elif [ "$review_requests_count" -gt 0 ]; then
             echo "   👁️  Review status: $review_requests_count review(s) requested" >&2
         else
-            echo "   👁️  Review status: No reviews required" >&2
+            echo "   👁️  Review status: None" >&2
         fi
 
         if [ "$check_count" -eq 0 ] && [ "$checks_json" != "" ] && [ "$checks_json" != "[]" ] && [ "$no_checks_configured" = "false" ]; then
