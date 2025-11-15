@@ -4,7 +4,7 @@ Automated workflow running Claude Code continuously - creating, reviewing, and m
 
 ## ⚙️ How it works
 
-For tasks that require multiple iterations to complete, this script runs Claude Code repeatedly until done:
+This script runs Claude Code in iterations until multi-step tasks are complete:
 
 - Claude Code runs in a loop based on your prompt
 - All changes are committed to a new branch
