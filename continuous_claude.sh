@@ -4,6 +4,7 @@ ADDITIONAL_FLAGS="--dangerously-skip-permissions --output-format json"
 
 PROMPT=""
 MAX_RUNS=""
+GIT_BRANCH_PREFIX="continuous-claude/"
 ERROR_LOG=""
 error_count=0
 extra_iterations=0
@@ -20,6 +21,10 @@ parse_arguments() {
                 ;;
             -m|--max-runs)
                 MAX_RUNS="$2"
+                shift 2
+                ;;
+            --git-branch-prefix)
+                GIT_BRANCH_PREFIX="$2"
                 shift 2
                 ;;
             *)
@@ -66,6 +71,7 @@ validate_requirements() {
 
 continuous_claude_commit() {
     local iteration_display="$1"
+    local iteration_num="$2"
     
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
         return 0
@@ -76,18 +82,32 @@ continuous_claude_commit() {
         return 0
     fi
 
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    local timestamp=$(date +%s)
+    local branch_name="${GIT_BRANCH_PREFIX}${iteration_num}-${timestamp}"
+    
+    echo "🌿 $iteration_display Creating branch: $branch_name" >&2
+    
+    if ! git checkout -b "$branch_name" >/dev/null 2>&1; then
+        echo "⚠️  $iteration_display Failed to create branch" >&2
+        return 1
+    fi
+    
     echo "💬 $iteration_display Committing changes..." >&2
     
     commit_prompt="Please review the dirty files in the git repository, write a commit message with: (1) a short one-line summary, (2) two newlines, (3) then a detailed explanation. Do not include any footers or metadata like 'Generated with Claude Code' or 'Co-Authored-By'. Feel free to look at the last few commits to get a sense of the commit message style. Track all files and commit the changes using 'git commit -am \"your message\"' (don't push, just commit, no need to ask for confirmation)."
     
     if claude -p "$commit_prompt" --allowedTools "Bash(git)" --dangerously-skip-permissions >/dev/null 2>&1; then
         if git diff --quiet && git diff --cached --quiet; then
-            echo "📦 $iteration_display Changes committed" >&2
+            echo "📦 $iteration_display Changes committed on branch: $branch_name" >&2
+            git checkout "$current_branch" >/dev/null 2>&1
         else
             echo "⚠️  $iteration_display Commit command ran but changes still present" >&2
+            git checkout "$current_branch" >/dev/null 2>&1
         fi
     else
         echo "⚠️  $iteration_display Failed to commit changes" >&2
+        git checkout "$current_branch" >/dev/null 2>&1
     fi
 }
 
@@ -164,6 +184,7 @@ handle_iteration_error() {
 handle_iteration_success() {
     local iteration_display="$1"
     local result="$2"
+    local iteration_num="$3"
     
     error_count=0
     if [ $extra_iterations -gt 0 ]; then
@@ -186,7 +207,7 @@ handle_iteration_success() {
     fi
 
     echo "✅ $iteration_display Work completed" >&2
-    continuous_claude_commit "$iteration_display"
+    continuous_claude_commit "$iteration_display" "$iteration_num"
     successful_iterations=$((successful_iterations + 1))
 }
 
@@ -213,7 +234,7 @@ execute_single_iteration() {
         return 1
     fi
     
-    handle_iteration_success "$iteration_display" "$result"
+    handle_iteration_success "$iteration_display" "$result" "$iteration_num"
     return 0
 }
 
