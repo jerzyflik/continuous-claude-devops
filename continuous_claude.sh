@@ -176,7 +176,7 @@ wait_for_pr_checks() {
             return 1
         fi
 
-        local review_decision=$(echo "$pr_info" | jq -r '.reviewDecision // "null"')
+        local review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
         local review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
         
         local reviews_pending=false
@@ -207,7 +207,7 @@ wait_for_pr_checks() {
         fi
 
         if [ "$all_completed" = "true" ] && [ "$all_success" = "true" ] && [ "$reviews_pending" = "false" ]; then
-            if [ "$review_decision" = "APPROVED" ] || [ "$review_decision" = "null" ]; then
+            if [ "$review_decision" = "APPROVED" ] || [ "$review_decision" = "null" ] || [ -z "$review_decision" ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
                 return 0
             fi
