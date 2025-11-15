@@ -237,7 +237,8 @@ wait_for_pr_checks() {
         fi
 
         if [ "$all_completed" = "true" ] && [ "$all_success" = "true" ] && [ "$reviews_pending" = "false" ]; then
-            if [ "$review_decision" = "APPROVED" ] || [ "$review_decision" = "null" ] || [ -z "$review_decision" ]; then
+            # Only merge if: review is APPROVED, or no review was ever requested (null + no review requests)
+            if [ "$review_decision" = "APPROVED" ] || ([ "$review_decision" = "null" ] || [ -z "$review_decision" ]) && [ "$review_requests_count" -eq 0 ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
                 return 0
             fi
