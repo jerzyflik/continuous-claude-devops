@@ -124,6 +124,8 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-cost
 - `--notes-file`: Path to shared task notes file (default: `SHARED_TASK_NOTES.md`)
 - `--disable-commits`: Disable automatic git commits, PR creation, and merging (useful for testing)
 
+Any additional flags you provide that are not recognized by `continuous-claude` will be automatically forwarded to the underlying `claude` command. For example, you can pass `--allowedTools`, `--model`, or any other Claude Code CLI flags.
+
 ## 📝 Examples
 
 ```bash
@@ -153,6 +155,12 @@ continuous-claude -p "add features" -m 5 --owner AnandChowdhary --repo continuou
 
 # Test without creating commits or PRs
 continuous-claude -p "test changes" -m 2 --owner AnandChowdhary --repo continuous-claude --disable-commits
+
+# Pass additional Claude Code CLI flags (e.g., restrict tools)
+continuous-claude -p "add features" -m 3 --owner AnandChowdhary --repo continuous-claude --allowedTools "Write,Read"
+
+# Use a different model
+continuous-claude -p "refactor code" -m 5 --owner AnandChowdhary --repo continuous-claude --model claude-opus-4-20250514
 ```
 
 ## 📊 Example output

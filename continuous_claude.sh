@@ -47,6 +47,7 @@ extra_iterations=0
 successful_iterations=0
 total_cost=0
 i=1
+EXTRA_CLAUDE_FLAGS=()
 
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
@@ -88,6 +89,8 @@ parse_arguments() {
                 shift 2
                 ;;
             *)
+                # Collect unknown flags to forward to claude
+                EXTRA_CLAUDE_FLAGS+=("$1")
                 shift
                 ;;
         esac
@@ -97,42 +100,42 @@ parse_arguments() {
 validate_arguments() {
     if [ -z "$PROMPT" ]; then
         echo "❌ Error: Prompt is required. Use -p to provide a prompt." >&2
-        echo "Usage: $0 -p \"your prompt\" (-m max_runs | --max-cost max_cost) --owner owner --repo repo [options]" >&2
+        echo "Usage: $0 -p \"your prompt\" (-m max-runs | --max-cost max-cost) --owner owner --repo repo [options]" >&2
         exit 1
     fi
 
     if [ -z "$MAX_RUNS" ] && [ -z "$MAX_COST" ]; then
-        echo "❌ Error: Either MAX_RUNS or MAX_COST is required." >&2
-        echo "Usage: $0 -p \"your prompt\" (-m max_runs | --max-cost max_cost) --owner owner --repo repo [options]" >&2
+        echo "❌ Error: Either --max-runs or --max-cost is required." >&2
+        echo "Usage: $0 -p \"your prompt\" (-m max-runs | --max-cost max-cost) --owner owner --repo repo [options]" >&2
         exit 1
     fi
 
     if [ -n "$MAX_RUNS" ] && ! [[ "$MAX_RUNS" =~ ^[0-9]+$ ]]; then
-        echo "❌ Error: MAX_RUNS must be a non-negative integer" >&2
+        echo "❌ Error: --max-runs must be a non-negative integer" >&2
         exit 1
     fi
 
     if [ -n "$MAX_COST" ]; then
         if ! [[ "$MAX_COST" =~ ^[0-9]+\.?[0-9]*$ ]] || [ "$(awk "BEGIN {print ($MAX_COST <= 0)}")" = "1" ]; then
-            echo "❌ Error: MAX_COST must be a positive number" >&2
+            echo "❌ Error: --max-cost must be a positive number" >&2
             exit 1
         fi
     fi
 
     if [[ ! "$MERGE_STRATEGY" =~ ^(squash|merge|rebase)$ ]]; then
-        echo "❌ Error: MERGE_STRATEGY must be one of: squash, merge, rebase" >&2
+        echo "❌ Error: --merge-strategy must be one of: squash, merge, rebase" >&2
         exit 1
     fi
 
     if [ -z "$GITHUB_OWNER" ]; then
         echo "❌ Error: GitHub owner is required. Use --owner to provide the owner." >&2
-        echo "Usage: $0 -p \"your prompt\" (-m max_runs | --max-cost max_cost) --owner owner --repo repo [options]" >&2
+        echo "Usage: $0 -p \"your prompt\" (-m max-runs | --max-cost max-cost) --owner owner --repo repo [options]" >&2
         exit 1
     fi
 
     if [ -z "$GITHUB_REPO" ]; then
         echo "❌ Error: GitHub repo is required. Use --repo to provide the repo." >&2
-        echo "Usage: $0 -p \"your prompt\" (-m max_runs | --max-cost max_cost) --owner owner --repo repo [options]" >&2
+        echo "Usage: $0 -p \"your prompt\" (-m max-runs | --max-cost max-cost) --owner owner --repo repo [options]" >&2
         exit 1
     fi
 }
@@ -562,7 +565,7 @@ run_claude_iteration() {
     local flags="$2"
     local error_log="$3"
 
-    claude -p "$prompt" $flags 2> >(tee "$error_log" >&2)
+    claude -p "$prompt" $flags "${EXTRA_CLAUDE_FLAGS[@]}" 2> >(tee "$error_log" >&2)
 }
 
 parse_claude_result() {
