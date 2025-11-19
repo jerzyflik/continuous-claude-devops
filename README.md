@@ -142,6 +142,8 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-cost
 - `--worktree-base-dir <path>`: Base directory for worktrees (default: `../continuous-claude-worktrees`)
 - `--cleanup-worktree`: Remove worktree after completion
 - `--list-worktrees`: List all active git worktrees and exit
+- `--dry-run`: Simulate execution without making changes
+
 
 Any additional flags you provide that are not recognized by `continuous-claude` will be automatically forwarded to the underlying `claude` command. For example, you can pass `--allowedTools`, `--model`, or any other Claude Code CLI flags.
 

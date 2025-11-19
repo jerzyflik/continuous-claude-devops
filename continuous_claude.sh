@@ -47,6 +47,7 @@ WORKTREE_NAME=""
 WORKTREE_BASE_DIR="../continuous-claude-worktrees"
 CLEANUP_WORKTREE=false
 LIST_WORKTREES=false
+DRY_RUN=false
 ERROR_LOG=""
 error_count=0
 extra_iterations=0
@@ -79,7 +80,9 @@ OPTIONAL FLAGS:
     --worktree <name>             Run in a git worktree for parallel execution (creates if needed)
     --worktree-base-dir <path>    Base directory for worktrees (default: "../continuous-claude-worktrees")
     --cleanup-worktree            Remove worktree after completion
+    --cleanup-worktree            Remove worktree after completion
     --list-worktrees              List all active git worktrees and exit
+    --dry-run                     Simulate execution without making changes
 
 EXAMPLES:
     # Run 5 iterations to fix bugs
@@ -184,6 +187,10 @@ parse_arguments() {
                 ;;
             --list-worktrees)
                 LIST_WORKTREES=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
                 shift
                 ;;
             *)
@@ -532,6 +539,12 @@ create_iteration_branch() {
     
     echo "🌿 $iteration_display Creating branch: $branch_name" >&2
     
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "   (DRY RUN) Would create branch $branch_name" >&2
+        echo "$branch_name"
+        return 0
+    fi
+    
     if ! git checkout -b "$branch_name" >/dev/null 2>&1; then
         echo "⚠️  $iteration_display Failed to create branch" >&2
         echo ""
@@ -568,6 +581,15 @@ continuous_claude_commit() {
         echo "🫙 $iteration_display No changes detected, cleaning up branch..." >&2
         git checkout "$main_branch" >/dev/null 2>&1
         git branch -D "$branch_name" >/dev/null 2>&1 || true
+        return 0
+    fi
+    
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "💬 $iteration_display (DRY RUN) Would commit changes..." >&2
+        echo "📦 $iteration_display (DRY RUN) Changes committed on branch: $branch_name" >&2
+        echo "📤 $iteration_display (DRY RUN) Would push branch..." >&2
+        echo "🔨 $iteration_display (DRY RUN) Would create pull request..." >&2
+        echo "✅ $iteration_display (DRY RUN) PR merged and local branch cleaned up" >&2
         return 0
     fi
     
@@ -793,6 +815,12 @@ run_claude_iteration() {
     local prompt="$1"
     local flags="$2"
     local error_log="$3"
+
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "🤖 (DRY RUN) Would run Claude Code with prompt: $prompt" >&2
+        echo "📝 (DRY RUN) Output: This is a simulated response from Claude Code." > "$error_log"
+        return 0
+    fi
 
     claude -p "$prompt" $flags "${EXTRA_CLAUDE_FLAGS[@]}" 2> >(tee "$error_log" >&2)
 }
