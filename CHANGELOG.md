@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## [v0.8.2] - 2025-11-20
+
+### What's Changed
+
+- :bug: Fix commit message prompt to include new files (0157de3)
+
+**Full Changelog**: https://github.com/AnandChowdhary/continuous-claude/compare/v0.8.1...v0.8.2
+
+### Installation
+
+Install with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/refs/tags/v0.8.2/install.sh | bash
+```
+
+Or download the script directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/refs/tags/v0.8.2/continuous_claude.sh -o continuous-claude
+chmod +x continuous-claude
+sudo mv continuous-claude /usr/local/bin/
+```
+
 ## [v0.8.1] - 2025-11-20
 
 ### What's Changed
