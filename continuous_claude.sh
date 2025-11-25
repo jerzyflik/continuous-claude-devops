@@ -286,6 +286,8 @@ check_for_updates() {
             
             if download_and_install_update "$latest_version" "$script_path"; then
                 echo "🔄 Restarting with new version..." >&2
+                # Restart the script with the original arguments
+                # This happens early in startup before main application logic runs
                 exec "$script_path" "$@"
             else
                 echo "⚠️  Update failed. Continuing with current version." >&2

@@ -577,9 +577,12 @@ setup() {
 @test "get_latest_version fails when gh is not available" {
     source "$SCRIPT_PATH"
     
-    # Mock command to fail for gh
+    # Mock command to fail only for gh
     function command() {
-        return 1
+        if [ "$2" = "gh" ]; then
+            return 1
+        fi
+        builtin command "$@"
     }
     export -f command
     
