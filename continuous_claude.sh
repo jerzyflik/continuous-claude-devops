@@ -392,11 +392,11 @@ detect_github_repo() {
     local owner=""
     local repo=""
     
-    if [[ "$remote_url" =~ ^https://github\.com/([^/]+)/([^/]+)(\.git)?$ ]]; then
+    if [[ "$remote_url" =~ ^https://github\.com/([^/]+)/([^/]+)$ ]]; then
         # HTTPS format
         owner="${BASH_REMATCH[1]}"
         repo="${BASH_REMATCH[2]}"
-    elif [[ "$remote_url" =~ ^git@github\.com:([^/]+)/([^/]+)(\.git)?$ ]]; then
+    elif [[ "$remote_url" =~ ^git@github\.com:([^/]+)/([^/]+)$ ]]; then
         # SSH format
         owner="${BASH_REMATCH[1]}"
         repo="${BASH_REMATCH[2]}"
