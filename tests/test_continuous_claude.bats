@@ -1402,7 +1402,7 @@ setup() {
     }
     export -f git
     
-    # Run the function with a fake branch and main branch
+    # Run the function with test branch name and main branch
     run continuous_claude_commit "(1/1)" "test-branch" "main"
     
     assert_success
