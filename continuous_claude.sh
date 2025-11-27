@@ -212,7 +212,8 @@ detect_rate_limit_error() {
     local error_output="$1"
     
     # Check for common rate limit patterns in Claude CLI output
-    if echo "$error_output" | grep -qi "rate.limit\|too.many.requests\|429\|quota\|limit.reached\|session.limit\|resets"; then
+    # Using -E for extended regex and explicit patterns for clarity
+    if echo "$error_output" | grep -Eqi "rate[[:space:]_-]?limit|too[[:space:]_-]?many[[:space:]_-]?requests|429|quota[[:space:]_-]?(exceeded|reached|limit)|limit[[:space:]_-]?reached|session[[:space:]_-]?limit|resets[[:space:]]"; then
         return 0  # Rate limit detected
     fi
     
@@ -260,7 +261,7 @@ parse_rate_limit_wait_time() {
     fi
     
     # Format: "retry after X" or "wait X seconds"
-    if [[ "$error_output" =~ (retry.after|wait)[[:space:]]+([0-9]+) ]]; then
+    if [[ "$error_output" =~ (retry[[:space:]]after|wait)[[:space:]]+([0-9]+) ]]; then
         echo "${BASH_REMATCH[2]}"
         return 0
     fi
