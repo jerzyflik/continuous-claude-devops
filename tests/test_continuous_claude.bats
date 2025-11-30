@@ -1408,3 +1408,166 @@ setup() {
     assert_success
     assert_output --partial "(DRY RUN) PR merged: <commit title would appear here>"
 }
+
+@test "wait_for_pr_checks prints initial waiting message once" {
+    source "$SCRIPT_PATH"
+    
+    # Mock gh to return empty checks array (waiting for checks to start)
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+            echo "[]"
+            return 0
+        elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            echo '{"reviewDecision": null, "reviewRequests": []}'
+            return 0
+        fi
+        return 1
+    }
+    
+    # Mock sleep to avoid actual waiting
+    function sleep() {
+        return 0
+    }
+    
+    export -f gh sleep
+    
+    # Run with a short timeout to capture initial output
+    run timeout 1 bash -c "
+        source '$SCRIPT_PATH'
+        wait_for_pr_checks 123 'owner' 'repo' '(1/1)' 2>&1
+    " || true
+    
+    # Should contain the initial waiting message
+    assert_output --partial "⏳ Waiting for checks to start"
+    # Should contain at least one dot
+    assert_output --partial "."
+}
+
+@test "wait_for_pr_checks prints dots on each waiting iteration" {
+    source "$SCRIPT_PATH"
+    
+    # Use a counter that persists across function calls
+    echo "0" > "$BATS_TEST_TMPDIR/gh_call_count"
+    
+    # Mock gh to return empty checks for first few calls, then checks appear
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+            local count=$(cat "$BATS_TEST_TMPDIR/gh_call_count")
+            count=$((count + 1))
+            echo "$count" > "$BATS_TEST_TMPDIR/gh_call_count"
+            
+            if [ $count -lt 3 ]; then
+                echo "[]"
+            else
+                # Return checks after 3 iterations
+                echo '[{"state": "completed", "bucket": "success"}]'
+            fi
+            return 0
+        elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            echo '{"reviewDecision": "APPROVED", "reviewRequests": []}'
+            return 0
+        fi
+        return 1
+    }
+    
+    # Mock sleep to avoid actual waiting
+    function sleep() {
+        return 0
+    }
+    
+    export -f gh sleep
+    
+    # Capture stderr output
+    run bash -c "
+        source '$SCRIPT_PATH'
+        wait_for_pr_checks 123 'owner' 'repo' '(1/1)' 2>&1
+    "
+    
+    # Should contain multiple dots (at least 2)
+    local dot_count=$(echo "$output" | grep -o '\.' | wc -l | tr -d ' ')
+    assert [ "$dot_count" -ge 2 ]
+    
+    rm -f "$BATS_TEST_TMPDIR/gh_call_count"
+}
+
+@test "wait_for_pr_checks prints newline when checks are found after waiting" {
+    source "$SCRIPT_PATH"
+    
+    # Use a counter that persists across function calls
+    echo "0" > "$BATS_TEST_TMPDIR/gh_call_count"
+    
+    # Mock gh to return empty checks first, then checks appear
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+            local count=$(cat "$BATS_TEST_TMPDIR/gh_call_count")
+            count=$((count + 1))
+            echo "$count" > "$BATS_TEST_TMPDIR/gh_call_count"
+            
+            if [ $count -le 2 ]; then
+                echo "[]"
+            else
+                # Return checks after 2 iterations
+                echo '[{"state": "completed", "bucket": "success"}]'
+            fi
+            return 0
+        elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            echo '{"reviewDecision": "APPROVED", "reviewRequests": []}'
+            return 0
+        fi
+        return 1
+    }
+    
+    # Mock sleep to avoid actual waiting
+    function sleep() {
+        return 0
+    }
+    
+    export -f gh sleep
+    
+    # Capture stderr output
+    run bash -c "
+        source '$SCRIPT_PATH'
+        wait_for_pr_checks 123 'owner' 'repo' '(1/1)' 2>&1
+    "
+    
+    # Should contain the waiting message followed by dots
+    assert_output --partial "⏳ Waiting for checks to start"
+    # Should eventually show check status (indicating newline was printed)
+    assert_output --partial "Found"
+    
+    rm -f "$BATS_TEST_TMPDIR/gh_call_count"
+}
+
+@test "wait_for_pr_checks does not print waiting message when checks found immediately" {
+    source "$SCRIPT_PATH"
+    
+    # Mock gh to return checks immediately (no waiting)
+    function gh() {
+        if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+            echo '[{"state": "completed", "bucket": "success"}]'
+            return 0
+        elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+            echo '{"reviewDecision": "APPROVED", "reviewRequests": []}'
+            return 0
+        fi
+        return 1
+    }
+    
+    # Mock sleep to avoid actual waiting
+    function sleep() {
+        return 0
+    }
+    
+    export -f gh sleep
+    
+    # Capture stderr output
+    run bash -c "
+        source '$SCRIPT_PATH'
+        wait_for_pr_checks 123 'owner' 'repo' '(1/1)' 2>&1
+    "
+    
+    # Should NOT contain waiting message when checks are found immediately
+    refute_output --partial "⏳ Waiting for checks to start"
+    # Should show check status instead
+    assert_output --partial "Found"
+}

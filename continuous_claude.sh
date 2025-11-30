@@ -781,6 +781,7 @@ wait_for_pr_checks() {
     local prev_failed_count=""
     local prev_review_status=""
     local prev_no_checks_configured=""
+    local waiting_message_printed=false
 
     while [ $iteration -lt $max_iterations ]; do
         local checks_json
@@ -889,17 +890,27 @@ wait_for_pr_checks() {
 
         if [ "$check_count" -eq 0 ] && [ "$checks_json" != "" ] && [ "$checks_json" != "[]" ] && [ "$no_checks_configured" = "false" ]; then
             if [ "$iteration" -lt 18 ]; then
-                if [ "$state_changed" = "true" ]; then
-                    echo "⏳ Waiting for checks to start... (will timeout after 3 minutes)" >&2
+                if [ "$waiting_message_printed" = "false" ]; then
+                    echo -n "⏳ Waiting for checks to start... (will timeout after 3 minutes) " >&2
+                    waiting_message_printed=true
                 fi
+                echo -n "." >&2
                 sleep 10
                 iteration=$((iteration + 1))
                 continue
             else
+                echo "" >&2
                 echo "   ⚠️  No checks found after waiting, proceeding without checks" >&2
                 all_completed=true
                 all_success=true
             fi
+        else
+            # If we were waiting and now checks are found, print newline
+            if [ "$waiting_message_printed" = "true" ]; then
+                echo "" >&2
+            fi
+            # Reset waiting message flag when checks are found
+            waiting_message_printed=false
         fi
 
         if [ "$all_completed" = "true" ] && [ "$all_success" = "true" ] && [ "$reviews_pending" = "false" ]; then
