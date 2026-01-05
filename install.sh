@@ -10,7 +10,7 @@ NC='\033[0m' # No Color
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="continuous-claude"
-REPO_URL="https://raw.githubusercontent.com/cdilga/continuous-claude/feat/wait-for-session-limit-reset"
+REPO_URL="https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/main"
 
 echo "🔂 Installing Continuous Claude..."
 
