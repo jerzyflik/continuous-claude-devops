@@ -1854,15 +1854,19 @@ setup() {
 
     WAIT_MODE="true"
 
+    # Create a file to track sleep calls
+    local sleep_log="$BATS_TEST_TMPDIR/sleep_called"
+    rm -f "$sleep_log"
+
     # Mock claude to output session limit error
     function claude() {
         echo "Session limit reached ∙ resets 7pm" >&2
         return 1
     }
 
-    # Mock parse_reset_time to return a time in the past (so wait completes immediately)
+    # Mock parse_reset_time to return a time in the future (300 seconds from now)
     function parse_reset_time() {
-        echo "$(($(command date +%s) - 100))"  # 100 seconds in the past
+        echo "$(($(command date +%s) + 300))"  # 300 seconds in the future
         return 0
     }
 
@@ -1872,14 +1876,15 @@ setup() {
         return 0
     }
 
-    # Mock sleep to do nothing
+    # Mock sleep to record the duration instead of actually sleeping
     function sleep() {
+        echo "$1" > "$BATS_TEST_TMPDIR/sleep_called"
         return 0
     }
 
     # Mock format_duration
     function format_duration() {
-        echo "0s"
+        echo "5m10s"
     }
 
     export -f claude parse_reset_time detect_session_limit sleep format_duration
@@ -1891,7 +1896,15 @@ setup() {
     # Should return 2 (session limit retry signal)
     assert [ $status -eq 2 ]
 
-    rm -f "$error_log"
+    # Verify sleep was actually called with a significant duration (around 310s = 300 + 10 buffer)
+    assert [ -f "$sleep_log" ]
+    local sleep_duration=$(cat "$sleep_log")
+    # Sleep duration should be approximately 310 seconds (300 + 10 buffer)
+    # Allow for small timing variations (between 305 and 315)
+    assert [ "$sleep_duration" -ge 305 ]
+    assert [ "$sleep_duration" -le 315 ]
+
+    rm -f "$error_log" "$sleep_log"
 }
 
 @test "run_claude_iteration returns normal exit code when wait mode disabled" {
