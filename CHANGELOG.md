@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [v0.14.1] - 2026-01-07
+
+### What's Changed
+
+- Update README install URLs (5b9edff)
+- Clean up Azure branches on PR close (98a7a07)
+- :pencil: Update logo, link to license (5a5492f)
+- :pencil: Revise README to include logo (53d9493)
+
+**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.0...v0.14.1
+
+
 ## [v0.14.0] - 2025-11-30
 
 ### What's Changed
