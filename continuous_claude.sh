@@ -1368,7 +1368,7 @@ continuous_claude_commit() {
 
         pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
     else
-        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "refs/heads/$branch_name" --target-branch "refs/heads/$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
             echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
             git checkout "$main_branch" >/dev/null 2>&1
             return 1
