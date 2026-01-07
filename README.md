@@ -3,7 +3,7 @@
 <details data-embed="anandchowdhary.com" data-title="Continuous Claude" data-summary="Run Claude Code in a loop repeatedly to do large projects">
   <summary>Automated workflow that orchestrates Claude Code in a continuous loop, autonomously creating PRs, waiting for checks, and merging - so multi-step projects complete while you sleep.</summary>
 
-This all started because I was contractually obligated to write unit tests for a codebase with hundreds of thousands of lines of code and go from 0% to 80%+ coverage in the next few weeks - seems like something Claude should do. So I built [Continuous Claude](https://github.com/AnandChowdhary/continuous-claude), a CLI tool to run Claude Code in a loop that maintains a persistent context across multiple iterations.
+This all started because I was contractually obligated to write unit tests for a codebase with hundreds of thousands of lines of code and go from 0% to 80%+ coverage in the next few weeks - seems like something Claude should do. So I built [Continuous Claude](https://github.com/AnandChowdhary/continuous-claude-devops), a CLI tool to run Claude Code in a loop that maintains a persistent context across multiple iterations.
 
 Current AI coding tools tend to halt after completing a task once they think the job is done and they don't really have an opportunity for self-criticism or further improvement. And this one-shot pattern then makes it difficult to tackle larger projects. So in contrast to running Claude Code "as is" (which provides help in isolated bursts), what you want is to run Claude code for a long period of time without exhausting the context window.
 
@@ -23,8 +23,8 @@ done
 to which my friend [Namanyay](https://nmn.gl) of Giga AI said "genius and hilarious". I spent all of Saturday building the rest of the tooling. Now, the Bash script acts as the conductor, repeatedly invoking Claude Code with the appropriate prompts and handling the surrounding tooling. For each iteration, the script:
 
 1. Creates a new branch and runs Claude Code to generate a commit
-2. Pushes changes and creates a pull request using GitHub's CLI
-3. Monitors CI checks and reviews via `gh pr checks`
+2. Pushes changes and creates a pull request using GitHub's CLI (or Azure DevOps via `az repos`)
+3. Monitors CI checks and reviews via `gh pr checks` (or Azure DevOps policies via `az repos pr policy list`)
 4. Merges on success or discards on failure
 5. Pulls the updated main branch, cleans up, and repeats
 
@@ -78,7 +78,7 @@ Using Claude Code to drive iterative development, this script fully automates th
 Install with a single command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude-devops/main/install.sh | bash
 ```
 
 This will:
@@ -93,7 +93,7 @@ If you prefer to install manually:
 
 ```bash
 # Download the script
-curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/main/continuous_claude.sh -o continuous-claude
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude-devops/main/continuous_claude.sh -o continuous-claude
 
 # Make it executable
 chmod +x continuous-claude
@@ -115,8 +115,9 @@ sudo rm /usr/local/bin/continuous-claude
 Before using `continuous-claude`, you need:
 
 1. **[Claude Code CLI](https://code.claude.com)** - Authenticate with `claude auth`
-2. **[GitHub CLI](https://cli.github.com)** - Authenticate with `gh auth login`
-3. **jq** - Install with `brew install jq` (macOS) or `apt-get install jq` (Linux)
+2. **[GitHub CLI](https://cli.github.com)** - Authenticate with `gh auth login` (for GitHub)
+3. **[Azure CLI](https://learn.microsoft.com/cli/azure/)** with the Azure DevOps extension - Authenticate with `az devops login` (for Azure DevOps)
+4. **jq** - Install with `brew install jq` (macOS) or `apt-get install jq` (Linux)
 
 ### Usage
 
@@ -132,6 +133,13 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-cost
 
 # Or run for a specific duration (time-boxed bursts)
 continuous-claude --prompt "add unit tests until all code is covered" --max-duration 2h
+
+# Or run against Azure DevOps (org/project/repo auto-detected from git remote)
+continuous-claude --prompt "add unit tests until all code is covered" --max-runs 5 --repo-cli az
+
+# Or explicitly specify Azure DevOps details
+continuous-claude --prompt "add unit tests until all code is covered" --max-runs 5 \
+  --repo-cli az --azure-org https://dev.azure.com/myorg --azure-project MyProject --azure-repo MyRepo
 ```
 
 ## 🎯 Flags
@@ -140,8 +148,12 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-dura
 - `-m, --max-runs`: Maximum number of iterations, use `0` for infinite (required unless --max-cost or --max-duration is provided)
 - `--max-cost`: Maximum USD to spend (required unless --max-runs or --max-duration is provided)
 - `--max-duration`: Maximum duration to run (e.g., `2h`, `30m`, `1h30m`) (required unless --max-runs or --max-cost is provided)
+- `--repo-cli`: Repo CLI to use for PRs and checks (`gh` or `az`, default: `gh`)
 - `--owner`: GitHub repository owner (auto-detected from git remote if not provided)
 - `--repo`: GitHub repository name (auto-detected from git remote if not provided)
+- `--azure-org`: Azure DevOps organization name or URL (auto-detected from git remote if not provided)
+- `--azure-project`: Azure DevOps project name (auto-detected from git remote if not provided)
+- `--azure-repo`: Azure DevOps repository name (auto-detected from git remote if not provided)
 - `--merge-strategy`: Merge strategy: `squash`, `merge`, or `rebase` (default: `squash`)
 - `--git-branch-prefix`: Prefix for git branch names (default: `continuous-claude/`)
 - `--notes-file`: Path to shared task notes file (default: `SHARED_TASK_NOTES.md`)

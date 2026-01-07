@@ -43,6 +43,16 @@ setup() {
     assert_equal "$GITHUB_REPO" "repo"
 }
 
+@test "parse_arguments handles repo cli flags" {
+    source "$SCRIPT_PATH"
+    parse_arguments --repo-cli az --azure-org org --azure-project project --azure-repo repo
+
+    assert_equal "$REPO_CLI" "az"
+    assert_equal "$AZURE_ORG" "org"
+    assert_equal "$AZURE_PROJECT" "project"
+    assert_equal "$AZURE_REPO" "repo"
+}
+
 @test "parse_arguments handles dry-run flag" {
     source "$SCRIPT_PATH"
     parse_arguments -p "test" --dry-run
@@ -179,6 +189,28 @@ setup() {
     
     assert_failure
     assert_output --partial "Error: GitHub CLI (gh) is not installed"
+}
+
+@test "validate_requirements fails when az is missing and azure cli selected" {
+    # Mock command to fail for az
+    function command() {
+        if [ "$2" == "az" ]; then
+            return 1
+        fi
+        return 0
+    }
+    export -f command
+
+    source "$SCRIPT_PATH"
+    ENABLE_COMMITS="true"
+    REPO_CLI="az"
+    AZURE_ORG="https://dev.azure.com/org"
+    AZURE_PROJECT="project"
+    AZURE_REPO="repo"
+    run validate_requirements
+
+    assert_failure
+    assert_output --partial "Error: Azure CLI (az) is not installed"
 }
 
 @test "validate_requirements passes when gh is missing but commits disabled" {

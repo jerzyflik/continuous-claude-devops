@@ -46,8 +46,12 @@ MAX_DURATION=""
 ENABLE_COMMITS=true
 GIT_BRANCH_PREFIX="continuous-claude/"
 MERGE_STRATEGY="squash"
+REPO_CLI="gh"
 GITHUB_OWNER=""
 GITHUB_REPO=""
+AZURE_ORG=""
+AZURE_PROJECT=""
+AZURE_REPO=""
 WORKTREE_NAME=""
 WORKTREE_BASE_DIR="../continuous-claude-worktrees"
 CLEANUP_WORKTREE=false
@@ -159,8 +163,12 @@ REQUIRED OPTIONS:
 OPTIONAL FLAGS:
     -h, --help                    Show this help message
     -v, --version                 Show version information
+    --repo-cli <gh|az>            Repo CLI to use for PRs and checks (default: "gh")
     --owner <owner>               GitHub repository owner (auto-detected from git remote if not provided)
     --repo <repo>                 GitHub repository name (auto-detected from git remote if not provided)
+    --azure-org <org/url>         Azure DevOps organization name or URL
+    --azure-project <project>     Azure DevOps project name
+    --azure-repo <repo>           Azure DevOps repository name
     --disable-commits             Disable automatic commits and PR creation
     --auto-update                 Automatically install updates when available
     --disable-updates             Skip all update checks and prompts
@@ -225,7 +233,8 @@ EXAMPLES:
 
 REQUIREMENTS:
     - Claude Code CLI (https://claude.ai/code)
-    - GitHub CLI (gh) - authenticated with 'gh auth login'
+    - GitHub CLI (gh) - authenticated with 'gh auth login' (for --repo-cli gh)
+    - Azure CLI (az) with azure-devops extension - authenticated with 'az devops login' (for --repo-cli az)
     - jq - JSON parsing utility
     - Git repository (unless --disable-commits is used)
     
@@ -238,6 +247,16 @@ EOF
 
 show_version() {
     echo "continuous-claude version $VERSION"
+}
+
+normalize_azure_org() {
+    local org="$1"
+    if [[ "$org" =~ ^https?:// ]]; then
+        echo "$org"
+        return 0
+    fi
+    echo "https://dev.azure.com/$org"
+    return 0
 }
 
 get_latest_version() {
@@ -537,6 +556,67 @@ detect_github_repo() {
     return 0
 }
 
+detect_azure_repo() {
+    # Try to detect Azure DevOps org, project, and repo from git remote
+    # Returns: "org_url project repo" on success, empty string on failure
+
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        return 1
+    fi
+
+    local remote_url
+    if ! remote_url=$(git remote get-url origin 2>/dev/null); then
+        return 1
+    fi
+
+    local org=""
+    local project=""
+    local repo=""
+
+    if [[ "$remote_url" =~ ^https://dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/]+)$ ]]; then
+        org="${BASH_REMATCH[1]}"
+        project="${BASH_REMATCH[2]}"
+        repo="${BASH_REMATCH[3]}"
+    elif [[ "$remote_url" =~ ^https://[^@]+@dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/]+)$ ]]; then
+        org="${BASH_REMATCH[1]}"
+        project="${BASH_REMATCH[2]}"
+        repo="${BASH_REMATCH[3]}"
+    elif [[ "$remote_url" =~ ^https://([^/]+)\.visualstudio\.com/([^/]+)/_git/([^/]+)$ ]]; then
+        org="${BASH_REMATCH[1]}"
+        project="${BASH_REMATCH[2]}"
+        repo="${BASH_REMATCH[3]}"
+    elif [[ "$remote_url" =~ ^git@ssh\.dev\.azure\.com:v3/([^/]+)/([^/]+)/([^/]+)$ ]]; then
+        org="${BASH_REMATCH[1]}"
+        project="${BASH_REMATCH[2]}"
+        repo="${BASH_REMATCH[3]}"
+    else
+        return 1
+    fi
+
+    repo="${repo%.git}"
+
+    if [ -z "$org" ] || [ -z "$project" ] || [ -z "$repo" ]; then
+        return 1
+    fi
+
+    local org_url
+    org_url=$(normalize_azure_org "$org")
+
+    echo "$org_url $project $repo"
+    return 0
+}
+
+delete_azure_branch() {
+    local branch_name="$1"
+
+    if [ -z "$branch_name" ] || [ -z "$AZURE_REPO" ]; then
+        return 0
+    fi
+
+    local ref_name="refs/heads/$branch_name"
+    az repos ref delete --name "$ref_name" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --yes >/dev/null 2>&1 || true
+}
+
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -572,12 +652,28 @@ parse_arguments() {
                 MERGE_STRATEGY="$2"
                 shift 2
                 ;;
+            --repo-cli)
+                REPO_CLI="$2"
+                shift 2
+                ;;
             --owner)
                 GITHUB_OWNER="$2"
                 shift 2
                 ;;
             --repo)
                 GITHUB_REPO="$2"
+                shift 2
+                ;;
+            --azure-org)
+                AZURE_ORG="$2"
+                shift 2
+                ;;
+            --azure-project)
+                AZURE_PROJECT="$2"
+                shift 2
+                ;;
+            --azure-repo)
+                AZURE_REPO="$2"
                 shift 2
                 ;;
             --disable-commits)
@@ -696,6 +792,11 @@ validate_arguments() {
         exit 1
     fi
 
+    if [[ ! "$REPO_CLI" =~ ^(gh|az)$ ]]; then
+        echo "❌ Error: --repo-cli must be one of: gh, az" >&2
+        exit 1
+    fi
+
     if [ -n "$COMPLETION_THRESHOLD" ]; then
         if ! [[ "$COMPLETION_THRESHOLD" =~ ^[0-9]+$ ]] || [ "$COMPLETION_THRESHOLD" -lt 1 ]; then
             echo "❌ Error: --completion-threshold must be a positive integer" >&2
@@ -703,37 +804,80 @@ validate_arguments() {
         fi
     fi
 
-    # Only require GitHub info if commits are enabled
+    # Only require repo info if commits are enabled
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        # Auto-detect owner and repo if not provided
-        if [ -z "$GITHUB_OWNER" ] || [ -z "$GITHUB_REPO" ]; then
-            local detected_info
-            if detected_info=$(detect_github_repo); then
-                # Parse the detected owner and repo
-                local detected_owner=$(echo "$detected_info" | awk '{print $1}')
-                local detected_repo=$(echo "$detected_info" | awk '{print $2}')
-                
-                # Only use detected values if not already provided
-                if [ -z "$GITHUB_OWNER" ]; then
-                    GITHUB_OWNER="$detected_owner"
-                fi
-                if [ -z "$GITHUB_REPO" ]; then
-                    GITHUB_REPO="$detected_repo"
+        if [ "$REPO_CLI" = "gh" ]; then
+            # Auto-detect owner and repo if not provided
+            if [ -z "$GITHUB_OWNER" ] || [ -z "$GITHUB_REPO" ]; then
+                local detected_info
+                if detected_info=$(detect_github_repo); then
+                    # Parse the detected owner and repo
+                    local detected_owner=$(echo "$detected_info" | awk '{print $1}')
+                    local detected_repo=$(echo "$detected_info" | awk '{print $2}')
+                    
+                    # Only use detected values if not already provided
+                    if [ -z "$GITHUB_OWNER" ]; then
+                        GITHUB_OWNER="$detected_owner"
+                    fi
+                    if [ -z "$GITHUB_REPO" ]; then
+                        GITHUB_REPO="$detected_repo"
+                    fi
                 fi
             fi
-        fi
-        
-        # After detection attempt, verify both are set
-        if [ -z "$GITHUB_OWNER" ]; then
-            echo "❌ Error: GitHub owner is required. Use --owner to provide the owner, or run from a git repository with a GitHub remote." >&2
-            echo "Run '$0 --help' for usage information." >&2
-            exit 1
-        fi
+            
+            # After detection attempt, verify both are set
+            if [ -z "$GITHUB_OWNER" ]; then
+                echo "❌ Error: GitHub owner is required. Use --owner to provide the owner, or run from a git repository with a GitHub remote." >&2
+                echo "Run '$0 --help' for usage information." >&2
+                exit 1
+            fi
 
-        if [ -z "$GITHUB_REPO" ]; then
-            echo "❌ Error: GitHub repo is required. Use --repo to provide the repo, or run from a git repository with a GitHub remote." >&2
-            echo "Run '$0 --help' for usage information." >&2
-            exit 1
+            if [ -z "$GITHUB_REPO" ]; then
+                echo "❌ Error: GitHub repo is required. Use --repo to provide the repo, or run from a git repository with a GitHub remote." >&2
+                echo "Run '$0 --help' for usage information." >&2
+                exit 1
+            fi
+        else
+            if [ -n "$AZURE_ORG" ]; then
+                AZURE_ORG=$(normalize_azure_org "$AZURE_ORG")
+            fi
+
+            if [ -z "$AZURE_ORG" ] || [ -z "$AZURE_PROJECT" ] || [ -z "$AZURE_REPO" ]; then
+                local detected_info
+                if detected_info=$(detect_azure_repo); then
+                    local detected_org=$(echo "$detected_info" | awk '{print $1}')
+                    local detected_project=$(echo "$detected_info" | awk '{print $2}')
+                    local detected_repo=$(echo "$detected_info" | awk '{print $3}')
+
+                    if [ -z "$AZURE_ORG" ]; then
+                        AZURE_ORG="$detected_org"
+                    fi
+                    if [ -z "$AZURE_PROJECT" ]; then
+                        AZURE_PROJECT="$detected_project"
+                    fi
+                    if [ -z "$AZURE_REPO" ]; then
+                        AZURE_REPO="$detected_repo"
+                    fi
+                fi
+            fi
+
+            if [ -z "$AZURE_ORG" ]; then
+                echo "❌ Error: Azure DevOps organization is required. Use --azure-org or run from a git repository with an Azure DevOps remote." >&2
+                echo "Run '$0 --help' for usage information." >&2
+                exit 1
+            fi
+
+            if [ -z "$AZURE_PROJECT" ]; then
+                echo "❌ Error: Azure DevOps project is required. Use --azure-project or run from a git repository with an Azure DevOps remote." >&2
+                echo "Run '$0 --help' for usage information." >&2
+                exit 1
+            fi
+
+            if [ -z "$AZURE_REPO" ]; then
+                echo "❌ Error: Azure DevOps repo is required. Use --azure-repo or run from a git repository with an Azure DevOps remote." >&2
+                echo "Run '$0 --help' for usage information." >&2
+                exit 1
+            fi
         fi
     fi
 }
@@ -753,16 +897,33 @@ validate_requirements() {
         fi
     fi
 
-    # Only check for GitHub CLI if commits are enabled
+    # Only check for repo CLI if commits are enabled
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        if ! command -v gh &> /dev/null; then
-            echo "❌ Error: GitHub CLI (gh) is not installed: https://cli.github.com" >&2
-            exit 1
-        fi
+        if [ "$REPO_CLI" = "gh" ]; then
+            if ! command -v gh &> /dev/null; then
+                echo "❌ Error: GitHub CLI (gh) is not installed: https://cli.github.com" >&2
+                exit 1
+            fi
 
-        if ! gh auth status >/dev/null 2>&1; then
-            echo "❌ Error: GitHub CLI is not authenticated. Run 'gh auth login' first." >&2
-            exit 1
+            if ! gh auth status >/dev/null 2>&1; then
+                echo "❌ Error: GitHub CLI is not authenticated. Run 'gh auth login' first." >&2
+                exit 1
+            fi
+        else
+            if ! command -v az &> /dev/null; then
+                echo "❌ Error: Azure CLI (az) is not installed: https://learn.microsoft.com/cli/azure/install-azure-cli" >&2
+                exit 1
+            fi
+
+            if ! az devops -h >/dev/null 2>&1; then
+                echo "❌ Error: Azure DevOps CLI extension is not installed. Run 'az extension add --name azure-devops'." >&2
+                exit 1
+            fi
+
+            if ! az devops project show --project "$AZURE_PROJECT" --org "$AZURE_ORG" >/dev/null 2>&1; then
+                echo "❌ Error: Azure DevOps CLI is not authenticated or project is inaccessible. Run 'az devops login' and verify --azure-org/--azure-project." >&2
+                exit 1
+            fi
         fi
     fi
 }
@@ -786,13 +947,30 @@ wait_for_pr_checks() {
     while [ $iteration -lt $max_iterations ]; do
         local checks_json
         local no_checks_configured=false
-        if ! checks_json=$(gh pr checks "$pr_number" --repo "$owner/$repo" --json state,bucket 2>&1); then
-            if echo "$checks_json" | grep -q "no checks"; then
-                no_checks_configured=true
-                checks_json="[]"
+        if [ "$REPO_CLI" = "gh" ]; then
+            if ! checks_json=$(gh pr checks "$pr_number" --repo "$owner/$repo" --json state,bucket 2>&1); then
+                if echo "$checks_json" | grep -q "no checks"; then
+                    no_checks_configured=true
+                    checks_json="[]"
+                else
+                    echo "⚠️  $iteration_display Failed to get PR checks status: $checks_json" >&2
+                    return 1
+                fi
+            fi
+        else
+            if ! checks_json=$(az repos pr policy list --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --output json 2>&1); then
+                if echo "$checks_json" | grep -qi "No policy"; then
+                    no_checks_configured=true
+                    checks_json="[]"
+                else
+                    echo "⚠️  $iteration_display Failed to get PR policy status: $checks_json" >&2
+                    return 1
+                fi
             else
-                echo "⚠️  $iteration_display Failed to get PR checks status: $checks_json" >&2
-                return 1
+                checks_json=$(echo "$checks_json" | jq '[.[] | {state: (.status // "pending"), bucket: ((.status // "pending") | ascii_downcase | if . == "approved" or . == "passed" or . == "succeeded" or . == "notapplicable" then "success" elif . == "rejected" or . == "failed" or . == "error" then "fail" else "pending" end)}]')
+                if [ "$checks_json" = "[]" ]; then
+                    no_checks_configured=true
+                fi
             fi
         fi
 
@@ -830,13 +1008,33 @@ wait_for_pr_checks() {
         fi
 
         local pr_info
-        if ! pr_info=$(gh pr view "$pr_number" --repo "$owner/$repo" --json reviewDecision,reviewRequests 2>&1); then
-            echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
-            return 1
-        fi
+        local review_decision="null"
+        local review_requests_count=0
+        if [ "$REPO_CLI" = "gh" ]; then
+            if ! pr_info=$(gh pr view "$pr_number" --repo "$owner/$repo" --json reviewDecision,reviewRequests 2>&1); then
+                echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
+                return 1
+            fi
 
-        local review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
-        local review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
+            review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
+            review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
+        else
+            if ! pr_info=$(az repos pr reviewer list --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --output json 2>&1); then
+                echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
+                return 1
+            fi
+
+            review_requests_count=$(echo "$pr_info" | jq '[.[] | select(.isRequired == true and (.vote == 0 or .vote == null))] | length' 2>/dev/null || echo "0")
+            local changes_requested_count=$(echo "$pr_info" | jq '[.[] | select(.vote < 0)] | length' 2>/dev/null || echo "0")
+            local approvals_count=$(echo "$pr_info" | jq '[.[] | select(.vote > 0)] | length' 2>/dev/null || echo "0")
+            if [ "$changes_requested_count" -gt 0 ]; then
+                review_decision="CHANGES_REQUESTED"
+            elif [ "$review_requests_count" -gt 0 ]; then
+                review_decision="REVIEW_REQUIRED"
+            elif [ "$approvals_count" -gt 0 ]; then
+                review_decision="APPROVED"
+            fi
+        fi
         
         local reviews_pending=false
         if [ "$review_decision" = "REVIEW_REQUIRED" ] || [ "$review_requests_count" -gt 0 ]; then
@@ -970,22 +1168,26 @@ merge_pr_and_cleanup() {
     local iteration_display="$5"
     local current_branch="$6"
 
-    echo "🔄 $iteration_display Updating branch with latest from main..." >&2
-    local update_output
-    if update_output=$(gh pr update-branch "$pr_number" --repo "$owner/$repo" 2>&1); then
-        echo "📥 $iteration_display Branch updated, re-checking PR status..." >&2
-        if ! wait_for_pr_checks "$pr_number" "$owner" "$repo" "$iteration_display"; then
-            echo "❌ $iteration_display PR checks failed after branch update" >&2
-            return 1
+    if [ "$REPO_CLI" = "gh" ]; then
+        echo "🔄 $iteration_display Updating branch with latest from main..." >&2
+        local update_output
+        if update_output=$(gh pr update-branch "$pr_number" --repo "$owner/$repo" 2>&1); then
+            echo "📥 $iteration_display Branch updated, re-checking PR status..." >&2
+            if ! wait_for_pr_checks "$pr_number" "$owner" "$repo" "$iteration_display"; then
+                echo "❌ $iteration_display PR checks failed after branch update" >&2
+                return 1
+            fi
+        else
+            # Check if update failed due to conflicts or just because branch is already up-to-date
+            if echo "$update_output" | grep -qi "already up-to-date\|is up to date"; then
+                echo "✅ $iteration_display Branch already up-to-date" >&2
+            else
+                echo "⚠️  $iteration_display Branch update failed: $update_output" >&2
+                return 1
+            fi
         fi
     else
-        # Check if update failed due to conflicts or just because branch is already up-to-date
-        if echo "$update_output" | grep -qi "already up-to-date\|is up to date"; then
-            echo "✅ $iteration_display Branch already up-to-date" >&2
-        else
-            echo "⚠️  $iteration_display Branch update failed: $update_output" >&2
-            return 1
-        fi
+        echo "ℹ️  $iteration_display Skipping branch update for Azure DevOps (no az equivalent)" >&2
     fi
 
     # Map merge strategy to gh pr merge flag
@@ -1003,9 +1205,23 @@ merge_pr_and_cleanup() {
     esac
 
     echo "🔀 $iteration_display Merging PR #$pr_number with strategy: $MERGE_STRATEGY..." >&2
-    if ! gh pr merge "$pr_number" --repo "$owner/$repo" $merge_flag >/dev/null 2>&1; then
-        echo "⚠️  $iteration_display Failed to merge PR (may have conflicts or be blocked)" >&2
-        return 1
+    if [ "$REPO_CLI" = "gh" ]; then
+        if ! gh pr merge "$pr_number" --repo "$owner/$repo" $merge_flag >/dev/null 2>&1; then
+            echo "⚠️  $iteration_display Failed to merge PR (may have conflicts or be blocked)" >&2
+            return 1
+        fi
+    else
+        local az_merge_args=(--id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status completed --delete-source-branch true)
+        if [ "$MERGE_STRATEGY" = "squash" ]; then
+            az_merge_args+=(--squash true)
+        elif [ "$MERGE_STRATEGY" = "rebase" ]; then
+            echo "⚠️  $iteration_display Azure DevOps CLI does not support rebase merge via az; using default merge." >&2
+        fi
+
+        if ! az repos pr update "${az_merge_args[@]}" >/dev/null 2>&1; then
+            echo "⚠️  $iteration_display Failed to merge PR (may have conflicts or be blocked)" >&2
+            return 1
+        fi
     fi
 
     echo "📥 $iteration_display Pulling latest from main..." >&2
@@ -1142,24 +1358,41 @@ continuous_claude_commit() {
 
     echo "🔨 $iteration_display Creating pull request..." >&2
     local pr_output
-    if ! pr_output=$(gh pr create --repo "$GITHUB_OWNER/$GITHUB_REPO" --title "$commit_title" --body "$commit_body" --base "$main_branch" 2>&1); then
-        echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
-        git checkout "$main_branch" >/dev/null 2>&1
-        return 1
+    local pr_number=""
+    if [ "$REPO_CLI" = "gh" ]; then
+        if ! pr_output=$(gh pr create --repo "$GITHUB_OWNER/$GITHUB_REPO" --title "$commit_title" --body "$commit_body" --base "$main_branch" 2>&1); then
+            echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
+            git checkout "$main_branch" >/dev/null 2>&1
+            return 1
+        fi
+
+        pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
+    else
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
+            echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
+            git checkout "$main_branch" >/dev/null 2>&1
+            return 1
+        fi
+
+        pr_number=$(echo "$pr_output" | jq -r '.pullRequestId // empty' 2>/dev/null)
     fi
 
-    local pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
     if [ -z "$pr_number" ]; then
         echo "⚠️  $iteration_display Failed to extract PR number from: $pr_output" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         return 1
     fi
 
-    echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for GitHub to set up..." >&2
+    echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for checks to start..." >&2
     sleep 5
     if ! wait_for_pr_checks "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$iteration_display"; then
         echo "⚠️  $iteration_display PR checks failed or timed out, closing PR and deleting remote branch..." >&2
-        gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+        if [ "$REPO_CLI" = "gh" ]; then
+            gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+        else
+            az repos pr update --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status abandoned >/dev/null 2>&1 || true
+            delete_azure_branch "$branch_name"
+        fi
         echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         git branch -D "$branch_name" >/dev/null 2>&1 || true
@@ -1168,10 +1401,21 @@ continuous_claude_commit() {
 
     if ! merge_pr_and_cleanup "$pr_number" "$GITHUB_OWNER" "$GITHUB_REPO" "$branch_name" "$iteration_display" "$main_branch"; then
         # Check if PR is still open before closing (might have been merged but cleanup failed)
-        local pr_state=$(gh pr view "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-        if [ "$pr_state" = "OPEN" ]; then
+        local pr_state="UNKNOWN"
+        if [ "$REPO_CLI" = "gh" ]; then
+            pr_state=$(gh pr view "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+        else
+            pr_state=$(az repos pr show --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --query status --output tsv 2>/dev/null || echo "UNKNOWN")
+        fi
+
+        if [ "$pr_state" = "OPEN" ] || [ "$pr_state" = "active" ]; then
             echo "⚠️  $iteration_display Failed to merge PR, closing it and deleting remote branch..." >&2
-            gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+            if [ "$REPO_CLI" = "gh" ]; then
+                gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
+            else
+                az repos pr update --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status abandoned >/dev/null 2>&1 || true
+                delete_azure_branch "$branch_name"
+            fi
         else
             echo "⚠️  $iteration_display PR was merged but cleanup failed" >&2
         fi
