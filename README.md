@@ -3,7 +3,7 @@
 <details data-embed="anandchowdhary.com" data-title="Continuous Claude" data-summary="Run Claude Code in a loop repeatedly to do large projects">
   <summary>Automated workflow that orchestrates Claude Code in a continuous loop, autonomously creating PRs, waiting for checks, and merging - so multi-step projects complete while you sleep.</summary>
 
-This all started because I was contractually obligated to write unit tests for a codebase with hundreds of thousands of lines of code and go from 0% to 80%+ coverage in the next few weeks - seems like something Claude should do. So I built [Continuous Claude](https://github.com/AnandChowdhary/continuous-claude), a CLI tool to run Claude Code in a loop that maintains a persistent context across multiple iterations.
+This all started because I was contractually obligated to write unit tests for a codebase with hundreds of thousands of lines of code and go from 0% to 80%+ coverage in the next few weeks - seems like something Claude should do. So I built [Continuous Claude](https://github.com/AnandChowdhary/continuous-claude-devops), a CLI tool to run Claude Code in a loop that maintains a persistent context across multiple iterations.
 
 Current AI coding tools tend to halt after completing a task once they think the job is done and they don't really have an opportunity for self-criticism or further improvement. And this one-shot pattern then makes it difficult to tackle larger projects. So in contrast to running Claude Code "as is" (which provides help in isolated bursts), what you want is to run Claude code for a long period of time without exhausting the context window.
 
@@ -78,7 +78,7 @@ Using Claude Code to drive iterative development, this script fully automates th
 Install with a single command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude-devops/main/install.sh | bash
 ```
 
 This will:
@@ -93,7 +93,7 @@ If you prefer to install manually:
 
 ```bash
 # Download the script
-curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude/main/continuous_claude.sh -o continuous-claude
+curl -fsSL https://raw.githubusercontent.com/AnandChowdhary/continuous-claude-devops/main/continuous_claude.sh -o continuous-claude
 
 # Make it executable
 chmod +x continuous-claude
