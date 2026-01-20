@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [v0.14.2] - 2026-01-20
+
+### What's Changed
+
+- Remove unsupported --project from Azure policy list (792651a)
+
+**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.1...v0.14.2
+
+
 ## [v0.14.1] - 2026-01-07
 
 ### What's Changed
