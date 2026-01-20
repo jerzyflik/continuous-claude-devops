@@ -958,7 +958,7 @@ wait_for_pr_checks() {
                 fi
             fi
         else
-            if ! checks_json=$(az repos pr policy list --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --output json 2>&1); then
+            if ! checks_json=$(az repos pr policy list --id "$pr_number" --org "$AZURE_ORG" --output json 2>&1); then
                 if echo "$checks_json" | grep -qi "No policy"; then
                     no_checks_configured=true
                     checks_json="[]"
@@ -966,11 +966,12 @@ wait_for_pr_checks() {
                     echo "⚠️  $iteration_display Failed to get PR policy status: $checks_json" >&2
                     return 1
                 fi
-            else
+            fi
+
+            if [ "$checks_json" != "[]" ]; then
                 checks_json=$(echo "$checks_json" | jq '[.[] | {state: (.status // "pending"), bucket: ((.status // "pending") | ascii_downcase | if . == "approved" or . == "passed" or . == "succeeded" or . == "notapplicable" then "success" elif . == "rejected" or . == "failed" or . == "error" then "fail" else "pending" end)}]')
-                if [ "$checks_json" = "[]" ]; then
-                    no_checks_configured=true
-                fi
+            else
+                no_checks_configured=true
             fi
         fi
 
