@@ -1020,7 +1020,7 @@ wait_for_pr_checks() {
             review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
             review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
         else
-            if ! pr_info=$(az repos pr reviewer list --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --output json 2>&1); then
+            if ! pr_info=$(az repos pr reviewer list --id "$pr_number" --org "$AZURE_ORG" --output json 2>&1); then
                 echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
                 return 1
             fi
@@ -1212,7 +1212,7 @@ merge_pr_and_cleanup() {
             return 1
         fi
     else
-        local az_merge_args=(--id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status completed --delete-source-branch true)
+        local az_merge_args=(--id "$pr_number" --org "$AZURE_ORG" --status completed --delete-source-branch true)
         if [ "$MERGE_STRATEGY" = "squash" ]; then
             az_merge_args+=(--squash true)
         elif [ "$MERGE_STRATEGY" = "rebase" ]; then
@@ -1369,7 +1369,7 @@ continuous_claude_commit() {
 
         pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
     else
-        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
             echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
             git checkout "$main_branch" >/dev/null 2>&1
             return 1
@@ -1391,7 +1391,7 @@ continuous_claude_commit() {
         if [ "$REPO_CLI" = "gh" ]; then
             gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
         else
-            az repos pr update --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status abandoned >/dev/null 2>&1 || true
+            az repos pr update --id "$pr_number" --org "$AZURE_ORG" --status abandoned >/dev/null 2>&1 || true
             delete_azure_branch "$branch_name"
         fi
         echo "🗑️  $iteration_display Cleaning up local branch: $branch_name" >&2
@@ -1406,7 +1406,7 @@ continuous_claude_commit() {
         if [ "$REPO_CLI" = "gh" ]; then
             pr_state=$(gh pr view "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
         else
-            pr_state=$(az repos pr show --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --query status --output tsv 2>/dev/null || echo "UNKNOWN")
+            pr_state=$(az repos pr show --id "$pr_number" --org "$AZURE_ORG" --query status --output tsv 2>/dev/null || echo "UNKNOWN")
         fi
 
         if [ "$pr_state" = "OPEN" ] || [ "$pr_state" = "active" ]; then
@@ -1414,7 +1414,7 @@ continuous_claude_commit() {
             if [ "$REPO_CLI" = "gh" ]; then
                 gh pr close "$pr_number" --repo "$GITHUB_OWNER/$GITHUB_REPO" --delete-branch >/dev/null 2>&1 || true
             else
-                az repos pr update --id "$pr_number" --org "$AZURE_ORG" --project "$AZURE_PROJECT" --status abandoned >/dev/null 2>&1 || true
+                az repos pr update --id "$pr_number" --org "$AZURE_ORG" --status abandoned >/dev/null 2>&1 || true
                 delete_azure_branch "$branch_name"
             fi
         else
