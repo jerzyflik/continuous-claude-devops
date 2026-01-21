@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [v0.14.3] - 2026-01-21
+
+### What's Changed
+
+- Drop --project from Azure PR commands (23eb7bd)
+
+**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.2...v0.14.3
+
+
 ## [v0.14.2] - 2026-01-20
 
 ### What's Changed
