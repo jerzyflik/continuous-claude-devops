@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## [v0.14.4] - 2026-02-06
+
+### What's Changed
+
+- Add instruction files to prompt assembly (eca3b45)
+- Use refs/heads for Azure PR branches (8786e86)
+
+**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.3...v0.14.4
+
+
 ## [v0.14.3] - 2026-01-21
 
 ### What's Changed
