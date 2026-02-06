@@ -67,6 +67,7 @@ total_cost=0
 completion_signal_count=0
 i=1
 EXTRA_CLAUDE_FLAGS=()
+ADDITIONAL_INSTRUCTIONS_FILES=()
 start_time=""
 
 parse_duration() {
@@ -175,6 +176,7 @@ OPTIONAL FLAGS:
     --git-branch-prefix <prefix>  Branch prefix for iterations (default: "continuous-claude/")
     --merge-strategy <strategy>   PR merge strategy: squash, merge, or rebase (default: "squash")
     --notes-file <file>           Shared notes file for iteration context (default: "SHARED_TASK_NOTES.md")
+    --instructions-file <file>    Additional instructions file to include in every prompt (can be provided multiple times)
     --worktree <name>             Run in a git worktree for parallel execution (creates if needed)
     --worktree-base-dir <path>    Base directory for worktrees (default: "../continuous-claude-worktrees")
     --cleanup-worktree            Remove worktree after completion
@@ -692,6 +694,10 @@ parse_arguments() {
                 NOTES_FILE="$2"
                 shift 2
                 ;;
+            --instructions-file)
+                ADDITIONAL_INSTRUCTIONS_FILES+=("$2")
+                shift 2
+                ;;
             --worktree)
                 WORKTREE_NAME="$2"
                 shift 2
@@ -757,6 +763,16 @@ validate_arguments() {
         echo "❌ Error: Prompt is required. Use -p to provide a prompt." >&2
         echo "Run '$0 --help' for usage information." >&2
         exit 1
+    fi
+
+    if [ ${#ADDITIONAL_INSTRUCTIONS_FILES[@]} -gt 0 ]; then
+        local instructions_file=""
+        for instructions_file in "${ADDITIONAL_INSTRUCTIONS_FILES[@]}"; do
+            if [ ! -f "$instructions_file" ]; then
+                echo "❌ Error: Instructions file not found: $instructions_file" >&2
+                exit 1
+            fi
+        done
     fi
 
     if [ -z "$MAX_RUNS" ] && [ -z "$MAX_COST" ] && [ -z "$MAX_DURATION" ]; then
@@ -1799,6 +1815,22 @@ execute_single_iteration() {
 $PROMPT
 
 "
+
+    if [ ${#ADDITIONAL_INSTRUCTIONS_FILES[@]} -gt 0 ]; then
+        local instructions_file=""
+        enhanced_prompt+="## ADDITIONAL INSTRUCTIONS
+
+"
+        for instructions_file in "${ADDITIONAL_INSTRUCTIONS_FILES[@]}"; do
+            local instructions_content
+            instructions_content=$(cat "$instructions_file")
+            enhanced_prompt+="From $instructions_file:
+
+$instructions_content
+
+"
+        done
+    fi
 
     if [ -f "$NOTES_FILE" ]; then
         local notes_content
