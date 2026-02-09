@@ -1715,8 +1715,8 @@ handle_iteration_error() {
             ;;
     esac
     
-    if [ $error_count -ge 3 ]; then
-        echo "❌ Fatal: 3 consecutive errors occurred. Exiting." >&2
+    if [ $error_count -ge 1 ]; then
+        echo "❌ Fatal: consecutive errors occurred. Exiting." >&2
         exit 1
     fi
     
@@ -1763,8 +1763,8 @@ handle_iteration_success() {
             error_count=$((error_count + 1))
             extra_iterations=$((extra_iterations + 1))
             echo "❌ $iteration_display PR merge queue failed ($error_count consecutive errors)" >&2
-            if [ $error_count -ge 3 ]; then
-                echo "❌ Fatal: 3 consecutive errors occurred. Exiting." >&2
+            if [ $error_count -ge 1 ]; then
+                echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
                 exit 1
             fi
             return 1
