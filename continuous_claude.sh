@@ -1034,7 +1034,7 @@ wait_for_pr_checks() {
 
             review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
             review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
-        else
+        else            
             if ! pr_info=$(az repos pr reviewer list --id "$pr_number" --org "$AZURE_ORG" --output json 2>&1); then
                 echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
                 return 1
@@ -1131,6 +1131,9 @@ wait_for_pr_checks() {
             # Only merge if: review is APPROVED, or no review was ever requested (null + no review requests)
             if [ "$review_decision" = "APPROVED" ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
+                return 0
+            elif [ "$review_decision" = "REVIEW_REQUIRED" ]; then
+                echo "✅ $iteration_display All PR checks, review is pending" >&2
                 return 0
             elif { [ "$review_decision" = "null" ] || [ -z "$review_decision" ]; } && [ "$review_requests_count" -eq 0 ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
