@@ -44,6 +44,7 @@ MAX_RUNS=""
 MAX_COST=""
 MAX_DURATION=""
 ENABLE_COMMITS=true
+ENABLE_PR_MERGE=true
 GIT_BRANCH_PREFIX="continuous-claude/"
 MERGE_STRATEGY="squash"
 REPO_CLI="gh"
@@ -171,6 +172,7 @@ OPTIONAL FLAGS:
     --azure-project <project>     Azure DevOps project name
     --azure-repo <repo>           Azure DevOps repository name
     --disable-commits             Disable automatic commits and PR creation
+    --disable-pr-merge            Create PRs but skip waiting for checks/reviews and merging
     --auto-update                 Automatically install updates when available
     --disable-updates             Skip all update checks and prompts
     --git-branch-prefix <prefix>  Branch prefix for iterations (default: "continuous-claude/")
@@ -204,6 +206,9 @@ EXAMPLES:
 
     # Run without commits (testing mode)
     continuous-claude -p "Refactor code" -m 3 --disable-commits
+
+    # Create PRs but skip waiting for checks/reviews and merging
+    continuous-claude -p "Refactor code" -m 3 --disable-pr-merge
 
     # Use custom branch prefix and merge strategy
     continuous-claude -p "Feature work" -m 10 --owner myuser --repo myproject \\
@@ -680,6 +685,10 @@ parse_arguments() {
                 ;;
             --disable-commits)
                 ENABLE_COMMITS=false
+                shift
+                ;;
+            --disable-pr-merge)
+                ENABLE_PR_MERGE=false
                 shift
                 ;;
             --auto-update)
@@ -1341,7 +1350,11 @@ continuous_claude_commit() {
         echo "📦 $iteration_display (DRY RUN) Changes committed on branch: $branch_name" >&2
         echo "📤 $iteration_display (DRY RUN) Would push branch..." >&2
         echo "🔨 $iteration_display (DRY RUN) Would create pull request..." >&2
-        echo "✅ $iteration_display (DRY RUN) PR merged: <commit title would appear here>" >&2
+        if [ "$ENABLE_PR_MERGE" = "true" ]; then
+            echo "✅ $iteration_display (DRY RUN) PR merged: <commit title would appear here>" >&2
+        else
+            echo "⏭️  $iteration_display (DRY RUN) Skipping PR checks and merge (--disable-pr-merge flag set)" >&2
+        fi
         return 0
     fi
     
@@ -1398,6 +1411,15 @@ continuous_claude_commit() {
         echo "⚠️  $iteration_display Failed to extract PR number from: $pr_output" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         return 1
+    fi
+
+    if [ "$ENABLE_PR_MERGE" != "true" ]; then
+        echo "⏭️  $iteration_display Skipping PR checks and merge (--disable-pr-merge flag set)" >&2
+        if ! git checkout "$main_branch" >/dev/null 2>&1; then
+            echo "⚠️  $iteration_display Failed to checkout $main_branch" >&2
+            return 1
+        fi
+        return 0
     fi
 
     echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for checks to start..." >&2
