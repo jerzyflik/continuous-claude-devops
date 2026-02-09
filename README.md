@@ -157,6 +157,7 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-runs
 - `--merge-strategy`: Merge strategy: `squash`, `merge`, or `rebase` (default: `squash`)
 - `--git-branch-prefix`: Prefix for git branch names (default: `continuous-claude/`)
 - `--notes-file`: Path to shared task notes file (default: `SHARED_TASK_NOTES.md`)
+- `--agents <file>`: Agent(s) file to pass to Claude Code (can be provided multiple times)
 - `--disable-commits`: Disable automatic git commits, PR creation, and merging (useful for testing)
 - `--worktree <name>`: Run in a git worktree for parallel execution (creates if needed)
 - `--worktree-base-dir <path>`: Base directory for worktrees (default: `../continuous-claude-worktrees`)
