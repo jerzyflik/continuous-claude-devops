@@ -69,6 +69,8 @@ completion_signal_count=0
 i=1
 EXTRA_CLAUDE_FLAGS=()
 ADDITIONAL_INSTRUCTIONS_FILES=()
+AGENTS_FILES=()
+CLAUDE_AGENT_FLAGS=()
 start_time=""
 
 parse_duration() {
@@ -179,6 +181,7 @@ OPTIONAL FLAGS:
     --merge-strategy <strategy>   PR merge strategy: squash, merge, or rebase (default: "squash")
     --notes-file <file>           Shared notes file for iteration context (default: "SHARED_TASK_NOTES.md")
     --instructions-file <file>    Additional instructions file to include in every prompt (can be provided multiple times)
+    --agents <file>               Agent(s) file to pass to Claude Code (can be provided multiple times)
     --worktree <name>             Run in a git worktree for parallel execution (creates if needed)
     --worktree-base-dir <path>    Base directory for worktrees (default: "../continuous-claude-worktrees")
     --cleanup-worktree            Remove worktree after completion
@@ -254,6 +257,16 @@ EOF
 
 show_version() {
     echo "continuous-claude version $VERSION"
+}
+
+build_agent_flags() {
+    CLAUDE_AGENT_FLAGS=()
+    if [ ${#AGENTS_FILES[@]} -gt 0 ]; then
+        local agents_file=""
+        for agents_file in "${AGENTS_FILES[@]}"; do
+            CLAUDE_AGENT_FLAGS+=(--agents "$agents_file")
+        done
+    fi
 }
 
 normalize_azure_org() {
@@ -707,6 +720,10 @@ parse_arguments() {
                 ADDITIONAL_INSTRUCTIONS_FILES+=("$2")
                 shift 2
                 ;;
+            --agents)
+                AGENTS_FILES+=("$2")
+                shift 2
+                ;;
             --worktree)
                 WORKTREE_NAME="$2"
                 shift 2
@@ -784,6 +801,16 @@ validate_arguments() {
         done
     fi
 
+    if [ ${#AGENTS_FILES[@]} -gt 0 ]; then
+        local agents_file=""
+        for agents_file in "${AGENTS_FILES[@]}"; do
+            if [ ! -f "$agents_file" ]; then
+                echo "❌ Error: Agents file not found: $agents_file" >&2
+                exit 1
+            fi
+        done
+    fi
+
     if [ -z "$MAX_RUNS" ] && [ -z "$MAX_COST" ] && [ -z "$MAX_DURATION" ]; then
         echo "❌ Error: Either --max-runs, --max-cost, or --max-duration is required." >&2
         echo "Run '$0 --help' for usage information." >&2
@@ -828,6 +855,8 @@ validate_arguments() {
             exit 1
         fi
     fi
+
+    build_agent_flags
 
     # Only require repo info if commits are enabled
     if [ "$ENABLE_COMMITS" = "true" ]; then
@@ -915,7 +944,7 @@ validate_requirements() {
 
     if ! command -v jq &> /dev/null; then
         echo "⚠️ jq is required for JSON parsing but is not installed. Asking Claude Code to install it..." >&2
-        claude -p "$PROMPT_JQ_INSTALL" --allowedTools "Bash,Read"
+        claude -p "$PROMPT_JQ_INSTALL" --allowedTools "Bash,Read" "${CLAUDE_AGENT_FLAGS[@]}"
         if ! command -v jq &> /dev/null; then
             echo "❌ Error: jq is still not installed after Claude Code attempt." >&2
             exit 1
@@ -1362,7 +1391,7 @@ continuous_claude_commit() {
     
     echo "💬 $iteration_display Committing changes..." >&2
     
-    if ! claude -p "$PROMPT_COMMIT_MESSAGE" --allowedTools "Bash(git)" --dangerously-skip-permissions >/dev/null 2>&1; then
+    if ! claude -p "$PROMPT_COMMIT_MESSAGE" --allowedTools "Bash(git)" --dangerously-skip-permissions "${CLAUDE_AGENT_FLAGS[@]}" >/dev/null 2>&1; then
         echo "⚠️  $iteration_display Failed to commit changes" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         return 1
@@ -1633,7 +1662,7 @@ run_claude_iteration() {
     local exit_code=0
     
     # Capture both stdout and stderr to temp files
-    claude -p "$prompt" $flags "${EXTRA_CLAUDE_FLAGS[@]}" >"$temp_stdout" 2>"$temp_stderr" || exit_code=$?
+    claude -p "$prompt" $flags "${CLAUDE_AGENT_FLAGS[@]}" "${EXTRA_CLAUDE_FLAGS[@]}" >"$temp_stdout" 2>"$temp_stderr" || exit_code=$?
     
     # Output stdout (JSON result) so caller can capture it
     if [ -f "$temp_stdout" ] && [ -s "$temp_stdout" ]; then
@@ -1669,7 +1698,7 @@ run_claude_iteration() {
                 echo "  - The command arguments are invalid"
                 echo ""
                 echo "Try running this command directly to see the full error:"
-                echo "  claude -p \"$prompt\" $flags ${EXTRA_CLAUDE_FLAGS[*]}"
+                echo "  claude -p \"$prompt\" $flags ${CLAUDE_AGENT_FLAGS[*]} ${EXTRA_CLAUDE_FLAGS[*]}"
             } >> "$error_log"
         fi
         
