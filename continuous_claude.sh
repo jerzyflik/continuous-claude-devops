@@ -1713,6 +1713,30 @@ run_claude_iteration() {
     return 0
 }
 
+is_credit_error() {
+    local error_log="$1"
+    
+    # Check if error log exists and is not empty
+    if [ ! -f "$error_log" ] || [ ! -s "$error_log" ]; then
+        return 1
+    fi
+    
+    # Read error log content
+    local error_content=$(cat "$error_log")
+    
+    # Check for Claude's specific limit message first (e.g., "You've hit your limit · resets 1pm (UTC)")
+    if echo "$error_content" | grep -iq "hit.*your.*limit\|you've hit your limit\|limit.*reset"; then
+        return 0
+    fi
+    
+    # Check for other credit/rate limit related keywords (case insensitive)
+    if echo "$error_content" | grep -iq "credit\|rate.*limit\|quota.*exceed\|usage.*limit\|billing\|insufficient.*funds\|account.*limit\|too.*many.*requests"; then
+        return 0
+    fi
+    
+    return 1
+}
+
 parse_claude_result() {
     local result="$1"
     
@@ -1913,22 +1937,105 @@ $notes_content
     
     local result
     local claude_exit_code=0
-    result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG") || claude_exit_code=$?
+    local retry_count=0
+    local max_credit_retries=999  # Effectively unlimited retries for credit errors
     
-    if [ $claude_exit_code -ne 0 ]; then
-        echo "" >&2
-        echo "⚠️  Claude Code command failed with exit code: $claude_exit_code" >&2
-        # Clean up branch on error
-        if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
-            git checkout "$main_branch" >/dev/null 2>&1
-            git branch -D "$branch_name" >/dev/null 2>&1 || true
+    # Retry loop for credit errors
+    while true; do
+        result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG") || claude_exit_code=$?
+        
+        if [ $claude_exit_code -ne 0 ]; then
+            # Check if this is a credit-related error
+            if is_credit_error "$ERROR_LOG"; then
+                retry_count=$((retry_count + 1))
+                echo "" >&2
+                echo "💳 $iteration_display Credit/rate limit error detected (attempt $retry_count)" >&2
+                echo "⏳ Waiting 30 minutes before retrying..." >&2
+                
+                # Show error details
+                if [ -f "$ERROR_LOG" ] && [ -s "$ERROR_LOG" ]; then
+                    echo "" >&2
+                    echo "Error details:" >&2
+                    cat "$ERROR_LOG" >&2
+                    echo "" >&2
+                fi
+                
+                # Wait 30 minutes (1800 seconds)
+                local wait_time=1800
+                local elapsed=0
+                local interval=60  # Update every minute
+                
+                while [ $elapsed -lt $wait_time ]; do
+                    local remaining=$((wait_time - elapsed))
+                    local minutes=$((remaining / 60))
+                    printf "\r⏳ Waiting... %d minutes remaining" $minutes >&2
+                    sleep $interval
+                    elapsed=$((elapsed + interval))
+                done
+                
+                echo "" >&2
+                echo "🔄 Retrying after credit wait period..." >&2
+                
+                # Reset exit code and continue loop to retry
+                claude_exit_code=0
+                continue
+            else
+                # Not a credit error, fail normally
+                echo "" >&2
+                echo "⚠️  Claude Code command failed with exit code: $claude_exit_code" >&2
+                # Clean up branch on error
+                if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
+                    git checkout "$main_branch" >/dev/null 2>&1
+                    git branch -D "$branch_name" >/dev/null 2>&1 || true
+                fi
+                handle_iteration_error "$iteration_display" "exit_code" ""
+                return 1
+            fi
         fi
-        handle_iteration_error "$iteration_display" "exit_code" ""
-        return 1
-    fi
+        
+        # Success or need to parse result, break out of retry loop
+        break
+    done
     
     local parse_result=$(parse_claude_result "$result")
     if [ "$?" != "0" ]; then
+        # Check if parse error might be due to credits (check error log again)
+        if is_credit_error "$ERROR_LOG"; then
+            retry_count=$((retry_count + 1))
+            echo "" >&2
+            echo "💳 $iteration_display Credit/rate limit error detected in response (attempt $retry_count)" >&2
+            echo "⏳ Waiting 30 minutes before retrying..." >&2
+            
+            # Show error details
+            if [ -f "$ERROR_LOG" ] && [ -s "$ERROR_LOG" ]; then
+                echo "" >&2
+                echo "Error details:" >&2
+                cat "$ERROR_LOG" >&2
+                echo "" >&2
+            fi
+            
+            # Wait 30 minutes and retry entire iteration
+            local wait_time=1800
+            local elapsed=0
+            local interval=60
+            
+            while [ $elapsed -lt $wait_time ]; do
+                local remaining=$((wait_time - elapsed))
+                local minutes=$((remaining / 60))
+                printf "\r⏳ Waiting... %d minutes remaining" $minutes >&2
+                sleep $interval
+                elapsed=$((elapsed + interval))
+            done
+            
+            echo "" >&2
+            echo "🔄 Retrying iteration after credit wait period..." >&2
+            
+            # Recursively retry the entire iteration
+            execute_single_iteration "$iteration_num"
+            return $?
+        fi
+        
+        # Not a credit error, fail normally
         # Clean up branch on error
         if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
             git checkout "$main_branch" >/dev/null 2>&1
