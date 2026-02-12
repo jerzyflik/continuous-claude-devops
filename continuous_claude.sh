@@ -45,6 +45,8 @@ MAX_COST=""
 MAX_DURATION=""
 ENABLE_COMMITS=true
 ENABLE_PR_MERGE=true
+CONTINUOUS_BRANCH=""
+CONTINUOUS_BRANCH_BASE=""
 GIT_BRANCH_PREFIX="continuous-claude/"
 MERGE_STRATEGY="squash"
 REPO_CLI="gh"
@@ -175,6 +177,7 @@ OPTIONAL FLAGS:
     --azure-repo <repo>           Azure DevOps repository name
     --disable-commits             Disable automatic commits and PR creation
     --disable-pr-merge            Create PRs but skip waiting for checks/reviews and merging
+    --continuous-branch <branch>  Work continuously on a single branch (creates if needed, no PR per iteration)
     --auto-update                 Automatically install updates when available
     --disable-updates             Skip all update checks and prompts
     --git-branch-prefix <prefix>  Branch prefix for iterations (default: "continuous-claude/")
@@ -212,6 +215,9 @@ EXAMPLES:
 
     # Create PRs but skip waiting for checks/reviews and merging
     continuous-claude -p "Refactor code" -m 3 --disable-pr-merge
+
+    # Work continuously on a single branch
+    continuous-claude -p "Implement feature" -m 10 --continuous-branch feature/new-feature
 
     # Use custom branch prefix and merge strategy
     continuous-claude -p "Feature work" -m 10 --owner myuser --repo myproject \\
@@ -703,6 +709,10 @@ parse_arguments() {
             --disable-pr-merge)
                 ENABLE_PR_MERGE=false
                 shift
+                ;;
+            --continuous-branch)
+                CONTINUOUS_BRANCH="$2"
+                shift 2
                 ;;
             --auto-update)
                 AUTO_UPDATE=true
@@ -1837,15 +1847,52 @@ handle_iteration_success() {
 
     echo "✅ $iteration_display Work completed" >&2
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        if ! continuous_claude_commit "$iteration_display" "$branch_name" "$main_branch"; then
-            error_count=$((error_count + 1))
-            extra_iterations=$((extra_iterations + 1))
-            echo "❌ $iteration_display PR merge queue failed ($error_count consecutive errors)" >&2
-            if [ $error_count -ge 1 ]; then
-                echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
-                exit 1
+        if [ -n "$CONTINUOUS_BRANCH" ]; then
+            # Continuous branch mode: commit to the same branch without creating PR
+            echo "💾 $iteration_display Committing changes..." >&2
+            
+            # Check if there are changes to commit
+            if git diff --quiet && git diff --cached --quiet; then
+                echo "⚠️  $iteration_display No changes to commit" >&2
+            else
+                # Stage all changes
+                git add . >/dev/null 2>&1
+                
+                # Generate commit message
+                local commit_message="Iteration $iteration_num: $(echo "$result_text" | head -n 1 | cut -c1-60)"
+                
+                # Commit changes
+                if ! git commit -m "$commit_message" >/dev/null 2>&1; then
+                    echo "❌ $iteration_display Failed to commit changes" >&2
+                    error_count=$((error_count + 1))
+                    extra_iterations=$((extra_iterations + 1))
+                    if [ $error_count -ge 1 ]; then
+                        echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
+                        exit 1
+                    fi
+                    return 1
+                fi
+                
+                # Push to remote
+                echo "⬆️  $iteration_display Pushing changes to remote..." >&2
+                if ! git push -u origin "$branch_name" 2>&1; then
+                    echo "⚠️  $iteration_display Warning: Failed to push branch (continuing anyway)" >&2
+                fi
+                
+                echo "✅ $iteration_display Changes committed to $branch_name" >&2
             fi
-            return 1
+        else
+            # Regular mode: commit and create PR
+            if ! continuous_claude_commit "$iteration_display" "$branch_name" "$main_branch"; then
+                error_count=$((error_count + 1))
+                extra_iterations=$((extra_iterations + 1))
+                echo "❌ $iteration_display PR merge queue failed ($error_count consecutive errors)" >&2
+                if [ $error_count -ge 1 ]; then
+                    echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
+                    exit 1
+                fi
+                return 1
+            fi
         fi
     else
         echo "⏭️  $iteration_display Skipping commits (--disable-commits flag set)" >&2
@@ -1875,15 +1922,41 @@ execute_single_iteration() {
     local branch_name=""
     
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        branch_name=$(create_iteration_branch "$iteration_display" "$iteration_num")
-        if [ $? -ne 0 ] || [ -z "$branch_name" ]; then
-            if git rev-parse --git-dir > /dev/null 2>&1; then
-                echo "❌ $iteration_display Failed to create branch" >&2
-                handle_iteration_error "$iteration_display" "exit_code" ""
-                return 1
+        if [ -n "$CONTINUOUS_BRANCH" ]; then
+            # Continuous branch mode: use the same branch for all iterations
+            if [ $iteration_num -eq 1 ]; then
+                # First iteration: create or checkout the continuous branch
+                local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+                # Store the base branch for PR creation later
+                if [ -z "$CONTINUOUS_BRANCH_BASE" ]; then
+                    CONTINUOUS_BRANCH_BASE="$current_branch"
+                fi
+                if [ "$current_branch" != "$CONTINUOUS_BRANCH" ]; then
+                    if git show-ref --verify --quiet "refs/heads/$CONTINUOUS_BRANCH"; then
+                        echo "🔀 $iteration_display Checking out existing branch: $CONTINUOUS_BRANCH" >&2
+                        git checkout "$CONTINUOUS_BRANCH" >/dev/null 2>&1
+                    else
+                        echo "🌿 $iteration_display Creating continuous branch: $CONTINUOUS_BRANCH" >&2
+                        git checkout -b "$CONTINUOUS_BRANCH" >/dev/null 2>&1
+                    fi
+                fi
+                branch_name="$CONTINUOUS_BRANCH"
+            else
+                # Subsequent iterations: already on the continuous branch
+                branch_name="$CONTINUOUS_BRANCH"
             fi
-            # Not a git repo, continue without branch
-            branch_name=""
+        else
+            # Regular mode: create a new branch for each iteration
+            branch_name=$(create_iteration_branch "$iteration_display" "$iteration_num")
+            if [ $? -ne 0 ] || [ -z "$branch_name" ]; then
+                if git rev-parse --git-dir > /dev/null 2>&1; then
+                    echo "❌ $iteration_display Failed to create branch" >&2
+                    handle_iteration_error "$iteration_display" "exit_code" ""
+                    return 1
+                fi
+                # Not a git repo, continue without branch
+                branch_name=""
+            fi
         fi
     fi
 
@@ -2103,6 +2176,66 @@ main_loop() {
     done
 }
 
+create_continuous_branch_pr() {
+    # Create a final PR for the continuous branch
+    if [ -z "$CONTINUOUS_BRANCH" ] || [ -z "$CONTINUOUS_BRANCH_BASE" ]; then
+        return 0
+    fi
+    
+    if [ "$ENABLE_COMMITS" != "true" ]; then
+        return 0
+    fi
+    
+    # Check if we're still on the continuous branch
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "$CONTINUOUS_BRANCH" ]; then
+        echo "⚠️  Not on continuous branch, skipping PR creation" >&2
+        return 0
+    fi
+    
+    # Check if there are any commits on the continuous branch vs base
+    local commit_count=$(git rev-list --count "$CONTINUOUS_BRANCH_BASE..$CONTINUOUS_BRANCH" 2>/dev/null || echo "0")
+    if [ "$commit_count" = "0" ]; then
+        echo "⚠️  No commits on $CONTINUOUS_BRANCH, skipping PR creation" >&2
+        return 0
+    fi
+    
+    echo "" >&2
+    echo "📋 Creating pull request for all iterations..." >&2
+    
+    # Generate PR title and body
+    local pr_title="Continuous iterations on $CONTINUOUS_BRANCH ($commit_count commits)"
+    local pr_body="This PR contains $commit_count iteration(s) from continuous-claude.\n\nBase branch: $CONTINUOUS_BRANCH_BASE\nContinuous branch: $CONTINUOUS_BRANCH\n\nCommits:\n"
+    pr_body+="$(git log --oneline $CONTINUOUS_BRANCH_BASE..$CONTINUOUS_BRANCH 2>/dev/null || echo 'Unable to retrieve commits')"
+    
+    local pr_output
+    local pr_number=""
+    
+    if [ "$REPO_CLI" = "gh" ]; then
+        if ! pr_output=$(gh pr create --repo "$GITHUB_OWNER/$GITHUB_REPO" --title "$pr_title" --body "$pr_body" --base "$CONTINUOUS_BRANCH_BASE" 2>&1); then
+            echo "⚠️  Failed to create PR: $pr_output" >&2
+            return 1
+        fi
+        pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
+    else
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$CONTINUOUS_BRANCH" --target-branch "$CONTINUOUS_BRANCH_BASE" --title "$pr_title" --description "$pr_body" --output json 2>&1); then
+            echo "⚠️  Failed to create PR: $pr_output" >&2
+            return 1
+        fi
+        pr_number=$(echo "$pr_output" | jq -r '.pullRequestId // empty' 2>/dev/null)
+    fi
+    
+    if [ -z "$pr_number" ]; then
+        echo "⚠️  Failed to extract PR number from output" >&2
+        return 1
+    fi
+    
+    echo "✅ Pull request created: #$pr_number" >&2
+    echo "$pr_output" >&2
+    
+    return 0
+}
+
 show_completion_summary() {
     # Calculate elapsed time if start_time was set
     local elapsed_msg=""
@@ -2156,6 +2289,10 @@ main() {
     trap "rm -f $ERROR_LOG; cleanup_worktree" EXIT
     
     main_loop
+    
+    # Create PR for continuous branch if applicable
+    create_continuous_branch_pr
+    
     show_completion_summary
     
     # Cleanup worktree if requested
