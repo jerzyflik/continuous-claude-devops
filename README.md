@@ -68,6 +68,7 @@ Using Claude Code to drive iterative development, this script fully automates th
 - It waits for all required PR checks and code reviews to complete
 - Once checks pass and reviews are approved, the PR is merged
 - This process repeats until your task is complete
+- Use `--disable-pr-merge` to stop after creating PRs without waiting for checks or merging
 - A `SHARED_TASK_NOTES.md` file maintains continuity by passing context between iterations, enabling seamless handoffs across AI and human developers
 - If multiple agents decide that the project is complete, the loop will stop early.
 
@@ -157,7 +158,9 @@ continuous-claude --prompt "add unit tests until all code is covered" --max-runs
 - `--merge-strategy`: Merge strategy: `squash`, `merge`, or `rebase` (default: `squash`)
 - `--git-branch-prefix`: Prefix for git branch names (default: `continuous-claude/`)
 - `--notes-file`: Path to shared task notes file (default: `SHARED_TASK_NOTES.md`)
+- `--agents <file>`: Agent(s) file to pass to Claude Code (can be provided multiple times)
 - `--disable-commits`: Disable automatic git commits, PR creation, and merging (useful for testing)
+- `--disable-pr-merge`: Create PRs but skip waiting for checks/reviews and merging
 - `--worktree <name>`: Run in a git worktree for parallel execution (creates if needed)
 - `--worktree-base-dir <path>`: Base directory for worktrees (default: `../continuous-claude-worktrees`)
 - `--cleanup-worktree`: Remove worktree after completion
@@ -209,6 +212,9 @@ continuous-claude -p "add features" -m 5 --notes-file "PROJECT_CONTEXT.md"
 
 # Test without creating commits or PRs
 continuous-claude -p "test changes" -m 2 --disable-commits
+
+# Create PRs but skip waiting for checks/reviews and merging
+continuous-claude -p "test changes" -m 2 --disable-pr-merge
 
 # Pass additional Claude Code CLI flags (e.g., restrict tools)
 continuous-claude -p "add features" -m 3 --allowedTools "Write,Read"

@@ -44,6 +44,9 @@ MAX_RUNS=""
 MAX_COST=""
 MAX_DURATION=""
 ENABLE_COMMITS=true
+ENABLE_PR_MERGE=true
+CONTINUOUS_BRANCH=""
+CONTINUOUS_BRANCH_BASE=""
 GIT_BRANCH_PREFIX="continuous-claude/"
 MERGE_STRATEGY="squash"
 REPO_CLI="gh"
@@ -68,6 +71,8 @@ completion_signal_count=0
 i=1
 EXTRA_CLAUDE_FLAGS=()
 ADDITIONAL_INSTRUCTIONS_FILES=()
+AGENTS_FILES=()
+CLAUDE_AGENT_FLAGS=()
 start_time=""
 
 parse_duration() {
@@ -171,12 +176,15 @@ OPTIONAL FLAGS:
     --azure-project <project>     Azure DevOps project name
     --azure-repo <repo>           Azure DevOps repository name
     --disable-commits             Disable automatic commits and PR creation
+    --disable-pr-merge            Create PRs but skip waiting for checks/reviews and merging
+    --continuous-branch <branch>  Work continuously on a single branch (creates if needed, no PR per iteration)
     --auto-update                 Automatically install updates when available
     --disable-updates             Skip all update checks and prompts
     --git-branch-prefix <prefix>  Branch prefix for iterations (default: "continuous-claude/")
     --merge-strategy <strategy>   PR merge strategy: squash, merge, or rebase (default: "squash")
     --notes-file <file>           Shared notes file for iteration context (default: "SHARED_TASK_NOTES.md")
     --instructions-file <file>    Additional instructions file to include in every prompt (can be provided multiple times)
+    --agents <file>               Agent(s) file to pass to Claude Code (can be provided multiple times)
     --worktree <name>             Run in a git worktree for parallel execution (creates if needed)
     --worktree-base-dir <path>    Base directory for worktrees (default: "../continuous-claude-worktrees")
     --cleanup-worktree            Remove worktree after completion
@@ -204,6 +212,12 @@ EXAMPLES:
 
     # Run without commits (testing mode)
     continuous-claude -p "Refactor code" -m 3 --disable-commits
+
+    # Create PRs but skip waiting for checks/reviews and merging
+    continuous-claude -p "Refactor code" -m 3 --disable-pr-merge
+
+    # Work continuously on a single branch
+    continuous-claude -p "Implement feature" -m 10 --continuous-branch feature/new-feature
 
     # Use custom branch prefix and merge strategy
     continuous-claude -p "Feature work" -m 10 --owner myuser --repo myproject \\
@@ -249,6 +263,16 @@ EOF
 
 show_version() {
     echo "continuous-claude version $VERSION"
+}
+
+build_agent_flags() {
+    CLAUDE_AGENT_FLAGS=()
+    if [ ${#AGENTS_FILES[@]} -gt 0 ]; then
+        local agents_file=""
+        for agents_file in "${AGENTS_FILES[@]}"; do
+            CLAUDE_AGENT_FLAGS+=(--agents "$agents_file")
+        done
+    fi
 }
 
 normalize_azure_org() {
@@ -682,6 +706,14 @@ parse_arguments() {
                 ENABLE_COMMITS=false
                 shift
                 ;;
+            --disable-pr-merge)
+                ENABLE_PR_MERGE=false
+                shift
+                ;;
+            --continuous-branch)
+                CONTINUOUS_BRANCH="$2"
+                shift 2
+                ;;
             --auto-update)
                 AUTO_UPDATE=true
                 shift
@@ -696,6 +728,10 @@ parse_arguments() {
                 ;;
             --instructions-file)
                 ADDITIONAL_INSTRUCTIONS_FILES+=("$2")
+                shift 2
+                ;;
+            --agents)
+                AGENTS_FILES+=("$2")
                 shift 2
                 ;;
             --worktree)
@@ -775,6 +811,16 @@ validate_arguments() {
         done
     fi
 
+    if [ ${#AGENTS_FILES[@]} -gt 0 ]; then
+        local agents_file=""
+        for agents_file in "${AGENTS_FILES[@]}"; do
+            if [ ! -f "$agents_file" ]; then
+                echo "❌ Error: Agents file not found: $agents_file" >&2
+                exit 1
+            fi
+        done
+    fi
+
     if [ -z "$MAX_RUNS" ] && [ -z "$MAX_COST" ] && [ -z "$MAX_DURATION" ]; then
         echo "❌ Error: Either --max-runs, --max-cost, or --max-duration is required." >&2
         echo "Run '$0 --help' for usage information." >&2
@@ -819,6 +865,8 @@ validate_arguments() {
             exit 1
         fi
     fi
+
+    build_agent_flags
 
     # Only require repo info if commits are enabled
     if [ "$ENABLE_COMMITS" = "true" ]; then
@@ -906,7 +954,7 @@ validate_requirements() {
 
     if ! command -v jq &> /dev/null; then
         echo "⚠️ jq is required for JSON parsing but is not installed. Asking Claude Code to install it..." >&2
-        claude -p "$PROMPT_JQ_INSTALL" --allowedTools "Bash,Read"
+        claude -p "$PROMPT_JQ_INSTALL" --allowedTools "Bash,Read" "${CLAUDE_AGENT_FLAGS[@]}"
         if ! command -v jq &> /dev/null; then
             echo "❌ Error: jq is still not installed after Claude Code attempt." >&2
             exit 1
@@ -982,12 +1030,11 @@ wait_for_pr_checks() {
                     echo "⚠️  $iteration_display Failed to get PR policy status: $checks_json" >&2
                     return 1
                 fi
-            fi
-
-            if [ "$checks_json" != "[]" ]; then
-                checks_json=$(echo "$checks_json" | jq '[.[] | {state: (.status // "pending"), bucket: ((.status // "pending") | ascii_downcase | if . == "approved" or . == "passed" or . == "succeeded" or . == "notapplicable" then "success" elif . == "rejected" or . == "failed" or . == "error" then "fail" else "pending" end)}]')
             else
-                no_checks_configured=true
+                checks_json=$(echo "$checks_json" | jq '[.[] | {state: (.status // "pending"), bucket: ((.status // "pending") | ascii_downcase | if . == "approved" or . == "passed" or . == "succeeded" or . == "notapplicable" then "success" elif . == "rejected" or . == "failed" or . == "error" then "fail" else "pending" end)}]')
+                if [ "$checks_json" = "[]" ]; then
+                    no_checks_configured=true
+                fi
             fi
         fi
 
@@ -1035,7 +1082,7 @@ wait_for_pr_checks() {
 
             review_decision=$(echo "$pr_info" | jq -r 'if .reviewDecision == "" then "null" else (.reviewDecision // "null") end')
             review_requests_count=$(echo "$pr_info" | jq '.reviewRequests | length' 2>/dev/null || echo "0")
-        else
+        else            
             if ! pr_info=$(az repos pr reviewer list --id "$pr_number" --org "$AZURE_ORG" --output json 2>&1); then
                 echo "⚠️  $iteration_display Failed to get PR review status: $pr_info" >&2
                 return 1
@@ -1132,6 +1179,9 @@ wait_for_pr_checks() {
             # Only merge if: review is APPROVED, or no review was ever requested (null + no review requests)
             if [ "$review_decision" = "APPROVED" ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
+                return 0
+            elif [ "$review_decision" = "REVIEW_REQUIRED" ]; then
+                echo "✅ $iteration_display All PR checks, review is pending" >&2
                 return 0
             elif { [ "$review_decision" = "null" ] || [ -z "$review_decision" ]; } && [ "$review_requests_count" -eq 0 ]; then
                 echo "✅ $iteration_display All PR checks and reviews passed" >&2
@@ -1341,13 +1391,17 @@ continuous_claude_commit() {
         echo "📦 $iteration_display (DRY RUN) Changes committed on branch: $branch_name" >&2
         echo "📤 $iteration_display (DRY RUN) Would push branch..." >&2
         echo "🔨 $iteration_display (DRY RUN) Would create pull request..." >&2
-        echo "✅ $iteration_display (DRY RUN) PR merged: <commit title would appear here>" >&2
+        if [ "$ENABLE_PR_MERGE" = "true" ]; then
+            echo "✅ $iteration_display (DRY RUN) PR merged: <commit title would appear here>" >&2
+        else
+            echo "⏭️  $iteration_display (DRY RUN) Skipping PR checks and merge (--disable-pr-merge flag set)" >&2
+        fi
         return 0
     fi
     
     echo "💬 $iteration_display Committing changes..." >&2
     
-    if ! claude -p "$PROMPT_COMMIT_MESSAGE" --allowedTools "Bash(git)" --dangerously-skip-permissions >/dev/null 2>&1; then
+    if ! claude -p "$PROMPT_COMMIT_MESSAGE" --allowedTools "Bash(git)" --dangerously-skip-permissions "${CLAUDE_AGENT_FLAGS[@]}" >/dev/null 2>&1; then
         echo "⚠️  $iteration_display Failed to commit changes" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         return 1
@@ -1385,7 +1439,7 @@ continuous_claude_commit() {
 
         pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
     else
-        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$branch_name" --target-branch "$main_branch" --title "$commit_title" --description "$commit_body" --output json 2>&1); then
             echo "⚠️  $iteration_display Failed to create PR: $pr_output" >&2
             git checkout "$main_branch" >/dev/null 2>&1
             return 1
@@ -1398,6 +1452,15 @@ continuous_claude_commit() {
         echo "⚠️  $iteration_display Failed to extract PR number from: $pr_output" >&2
         git checkout "$main_branch" >/dev/null 2>&1
         return 1
+    fi
+
+    if [ "$ENABLE_PR_MERGE" != "true" ]; then
+        echo "⏭️  $iteration_display Skipping PR checks and merge (--disable-pr-merge flag set)" >&2
+        if ! git checkout "$main_branch" >/dev/null 2>&1; then
+            echo "⚠️  $iteration_display Failed to checkout $main_branch" >&2
+            return 1
+        fi
+        return 0
     fi
 
     echo "🔍 $iteration_display PR #$pr_number created, waiting 5 seconds for checks to start..." >&2
@@ -1609,7 +1672,7 @@ run_claude_iteration() {
     local exit_code=0
     
     # Capture both stdout and stderr to temp files
-    claude -p "$prompt" $flags "${EXTRA_CLAUDE_FLAGS[@]}" >"$temp_stdout" 2>"$temp_stderr" || exit_code=$?
+    claude -p "$prompt" $flags "${CLAUDE_AGENT_FLAGS[@]}" "${EXTRA_CLAUDE_FLAGS[@]}" >"$temp_stdout" 2>"$temp_stderr" || exit_code=$?
     
     # Output stdout (JSON result) so caller can capture it
     if [ -f "$temp_stdout" ] && [ -s "$temp_stdout" ]; then
@@ -1645,7 +1708,7 @@ run_claude_iteration() {
                 echo "  - The command arguments are invalid"
                 echo ""
                 echo "Try running this command directly to see the full error:"
-                echo "  claude -p \"$prompt\" $flags ${EXTRA_CLAUDE_FLAGS[*]}"
+                echo "  claude -p \"$prompt\" $flags ${CLAUDE_AGENT_FLAGS[*]} ${EXTRA_CLAUDE_FLAGS[*]}"
             } >> "$error_log"
         fi
         
@@ -1658,6 +1721,30 @@ run_claude_iteration() {
     rm -f "$temp_stdout" "$temp_stderr"
     
     return 0
+}
+
+is_credit_error() {
+    local error_log="$1"
+    
+    # Check if error log exists and is not empty
+    if [ ! -f "$error_log" ] || [ ! -s "$error_log" ]; then
+        return 1
+    fi
+    
+    # Read error log content
+    local error_content=$(cat "$error_log")
+    
+    # Check for Claude's specific limit message first (e.g., "You've hit your limit · resets 1pm (UTC)")
+    if echo "$error_content" | grep -iq "hit.*your.*limit\|you've hit your limit\|limit.*reset"; then
+        return 0
+    fi
+    
+    # Check for other credit/rate limit related keywords (case insensitive)
+    if echo "$error_content" | grep -iq "credit\|rate.*limit\|quota.*exceed\|usage.*limit\|billing\|insufficient.*funds\|account.*limit\|too.*many.*requests"; then
+        return 0
+    fi
+    
+    return 1
 }
 
 parse_claude_result() {
@@ -1716,8 +1803,8 @@ handle_iteration_error() {
             ;;
     esac
     
-    if [ $error_count -ge 3 ]; then
-        echo "❌ Fatal: 3 consecutive errors occurred. Exiting." >&2
+    if [ $error_count -ge 1 ]; then
+        echo "❌ Fatal: consecutive errors occurred. Exiting." >&2
         exit 1
     fi
     
@@ -1760,15 +1847,52 @@ handle_iteration_success() {
 
     echo "✅ $iteration_display Work completed" >&2
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        if ! continuous_claude_commit "$iteration_display" "$branch_name" "$main_branch"; then
-            error_count=$((error_count + 1))
-            extra_iterations=$((extra_iterations + 1))
-            echo "❌ $iteration_display PR merge queue failed ($error_count consecutive errors)" >&2
-            if [ $error_count -ge 3 ]; then
-                echo "❌ Fatal: 3 consecutive errors occurred. Exiting." >&2
-                exit 1
+        if [ -n "$CONTINUOUS_BRANCH" ]; then
+            # Continuous branch mode: commit to the same branch without creating PR
+            echo "💾 $iteration_display Committing changes..." >&2
+            
+            # Check if there are changes to commit
+            if git diff --quiet && git diff --cached --quiet; then
+                echo "⚠️  $iteration_display No changes to commit" >&2
+            else
+                # Stage all changes
+                git add . >/dev/null 2>&1
+                
+                # Generate commit message
+                local commit_message="Iteration $iteration_num: $(echo "$result_text" | head -n 1 | cut -c1-60)"
+                
+                # Commit changes
+                if ! git commit -m "$commit_message" >/dev/null 2>&1; then
+                    echo "❌ $iteration_display Failed to commit changes" >&2
+                    error_count=$((error_count + 1))
+                    extra_iterations=$((extra_iterations + 1))
+                    if [ $error_count -ge 1 ]; then
+                        echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
+                        exit 1
+                    fi
+                    return 1
+                fi
+                
+                # Push to remote
+                echo "⬆️  $iteration_display Pushing changes to remote..." >&2
+                if ! git push -u origin "$branch_name" 2>&1; then
+                    echo "⚠️  $iteration_display Warning: Failed to push branch (continuing anyway)" >&2
+                fi
+                
+                echo "✅ $iteration_display Changes committed to $branch_name" >&2
             fi
-            return 1
+        else
+            # Regular mode: commit and create PR
+            if ! continuous_claude_commit "$iteration_display" "$branch_name" "$main_branch"; then
+                error_count=$((error_count + 1))
+                extra_iterations=$((extra_iterations + 1))
+                echo "❌ $iteration_display PR merge queue failed ($error_count consecutive errors)" >&2
+                if [ $error_count -ge 1 ]; then
+                    echo "❌ Fatal: 1 consecutive errors occurred. Exiting." >&2
+                    exit 1
+                fi
+                return 1
+            fi
         fi
     else
         echo "⏭️  $iteration_display Skipping commits (--disable-commits flag set)" >&2
@@ -1798,15 +1922,41 @@ execute_single_iteration() {
     local branch_name=""
     
     if [ "$ENABLE_COMMITS" = "true" ]; then
-        branch_name=$(create_iteration_branch "$iteration_display" "$iteration_num")
-        if [ $? -ne 0 ] || [ -z "$branch_name" ]; then
-            if git rev-parse --git-dir > /dev/null 2>&1; then
-                echo "❌ $iteration_display Failed to create branch" >&2
-                handle_iteration_error "$iteration_display" "exit_code" ""
-                return 1
+        if [ -n "$CONTINUOUS_BRANCH" ]; then
+            # Continuous branch mode: use the same branch for all iterations
+            if [ $iteration_num -eq 1 ]; then
+                # First iteration: create or checkout the continuous branch
+                local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+                # Store the base branch for PR creation later
+                if [ -z "$CONTINUOUS_BRANCH_BASE" ]; then
+                    CONTINUOUS_BRANCH_BASE="$current_branch"
+                fi
+                if [ "$current_branch" != "$CONTINUOUS_BRANCH" ]; then
+                    if git show-ref --verify --quiet "refs/heads/$CONTINUOUS_BRANCH"; then
+                        echo "🔀 $iteration_display Checking out existing branch: $CONTINUOUS_BRANCH" >&2
+                        git checkout "$CONTINUOUS_BRANCH" >/dev/null 2>&1
+                    else
+                        echo "🌿 $iteration_display Creating continuous branch: $CONTINUOUS_BRANCH" >&2
+                        git checkout -b "$CONTINUOUS_BRANCH" >/dev/null 2>&1
+                    fi
+                fi
+                branch_name="$CONTINUOUS_BRANCH"
+            else
+                # Subsequent iterations: already on the continuous branch
+                branch_name="$CONTINUOUS_BRANCH"
             fi
-            # Not a git repo, continue without branch
-            branch_name=""
+        else
+            # Regular mode: create a new branch for each iteration
+            branch_name=$(create_iteration_branch "$iteration_display" "$iteration_num")
+            if [ $? -ne 0 ] || [ -z "$branch_name" ]; then
+                if git rev-parse --git-dir > /dev/null 2>&1; then
+                    echo "❌ $iteration_display Failed to create branch" >&2
+                    handle_iteration_error "$iteration_display" "exit_code" ""
+                    return 1
+                fi
+                # Not a git repo, continue without branch
+                branch_name=""
+            fi
         fi
     fi
 
@@ -1860,22 +2010,105 @@ $notes_content
     
     local result
     local claude_exit_code=0
-    result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG") || claude_exit_code=$?
+    local retry_count=0
+    local max_credit_retries=999  # Effectively unlimited retries for credit errors
     
-    if [ $claude_exit_code -ne 0 ]; then
-        echo "" >&2
-        echo "⚠️  Claude Code command failed with exit code: $claude_exit_code" >&2
-        # Clean up branch on error
-        if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
-            git checkout "$main_branch" >/dev/null 2>&1
-            git branch -D "$branch_name" >/dev/null 2>&1 || true
+    # Retry loop for credit errors
+    while true; do
+        result=$(run_claude_iteration "$enhanced_prompt" "$ADDITIONAL_FLAGS" "$ERROR_LOG") || claude_exit_code=$?
+        
+        if [ $claude_exit_code -ne 0 ]; then
+            # Check if this is a credit-related error
+            if is_credit_error "$ERROR_LOG"; then
+                retry_count=$((retry_count + 1))
+                echo "" >&2
+                echo "💳 $iteration_display Credit/rate limit error detected (attempt $retry_count)" >&2
+                echo "⏳ Waiting 30 minutes before retrying..." >&2
+                
+                # Show error details
+                if [ -f "$ERROR_LOG" ] && [ -s "$ERROR_LOG" ]; then
+                    echo "" >&2
+                    echo "Error details:" >&2
+                    cat "$ERROR_LOG" >&2
+                    echo "" >&2
+                fi
+                
+                # Wait 30 minutes (1800 seconds)
+                local wait_time=1800
+                local elapsed=0
+                local interval=60  # Update every minute
+                
+                while [ $elapsed -lt $wait_time ]; do
+                    local remaining=$((wait_time - elapsed))
+                    local minutes=$((remaining / 60))
+                    printf "\r⏳ Waiting... %d minutes remaining" $minutes >&2
+                    sleep $interval
+                    elapsed=$((elapsed + interval))
+                done
+                
+                echo "" >&2
+                echo "🔄 Retrying after credit wait period..." >&2
+                
+                # Reset exit code and continue loop to retry
+                claude_exit_code=0
+                continue
+            else
+                # Not a credit error, fail normally
+                echo "" >&2
+                echo "⚠️  Claude Code command failed with exit code: $claude_exit_code" >&2
+                # Clean up branch on error
+                if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
+                    git checkout "$main_branch" >/dev/null 2>&1
+                    git branch -D "$branch_name" >/dev/null 2>&1 || true
+                fi
+                handle_iteration_error "$iteration_display" "exit_code" ""
+                return 1
+            fi
         fi
-        handle_iteration_error "$iteration_display" "exit_code" ""
-        return 1
-    fi
+        
+        # Success or need to parse result, break out of retry loop
+        break
+    done
     
     local parse_result=$(parse_claude_result "$result")
     if [ "$?" != "0" ]; then
+        # Check if parse error might be due to credits (check error log again)
+        if is_credit_error "$ERROR_LOG"; then
+            retry_count=$((retry_count + 1))
+            echo "" >&2
+            echo "💳 $iteration_display Credit/rate limit error detected in response (attempt $retry_count)" >&2
+            echo "⏳ Waiting 30 minutes before retrying..." >&2
+            
+            # Show error details
+            if [ -f "$ERROR_LOG" ] && [ -s "$ERROR_LOG" ]; then
+                echo "" >&2
+                echo "Error details:" >&2
+                cat "$ERROR_LOG" >&2
+                echo "" >&2
+            fi
+            
+            # Wait 30 minutes and retry entire iteration
+            local wait_time=1800
+            local elapsed=0
+            local interval=60
+            
+            while [ $elapsed -lt $wait_time ]; do
+                local remaining=$((wait_time - elapsed))
+                local minutes=$((remaining / 60))
+                printf "\r⏳ Waiting... %d minutes remaining" $minutes >&2
+                sleep $interval
+                elapsed=$((elapsed + interval))
+            done
+            
+            echo "" >&2
+            echo "🔄 Retrying iteration after credit wait period..." >&2
+            
+            # Recursively retry the entire iteration
+            execute_single_iteration "$iteration_num"
+            return $?
+        fi
+        
+        # Not a credit error, fail normally
         # Clean up branch on error
         if [ -n "$branch_name" ] && git rev-parse --git-dir > /dev/null 2>&1; then
             git checkout "$main_branch" >/dev/null 2>&1
@@ -1943,6 +2176,66 @@ main_loop() {
     done
 }
 
+create_continuous_branch_pr() {
+    # Create a final PR for the continuous branch
+    if [ -z "$CONTINUOUS_BRANCH" ] || [ -z "$CONTINUOUS_BRANCH_BASE" ]; then
+        return 0
+    fi
+    
+    if [ "$ENABLE_COMMITS" != "true" ]; then
+        return 0
+    fi
+    
+    # Check if we're still on the continuous branch
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "$CONTINUOUS_BRANCH" ]; then
+        echo "⚠️  Not on continuous branch, skipping PR creation" >&2
+        return 0
+    fi
+    
+    # Check if there are any commits on the continuous branch vs base
+    local commit_count=$(git rev-list --count "$CONTINUOUS_BRANCH_BASE..$CONTINUOUS_BRANCH" 2>/dev/null || echo "0")
+    if [ "$commit_count" = "0" ]; then
+        echo "⚠️  No commits on $CONTINUOUS_BRANCH, skipping PR creation" >&2
+        return 0
+    fi
+    
+    echo "" >&2
+    echo "📋 Creating pull request for all iterations..." >&2
+    
+    # Generate PR title and body
+    local pr_title="Continuous iterations on $CONTINUOUS_BRANCH ($commit_count commits)"
+    local pr_body="This PR contains $commit_count iteration(s) from continuous-claude.\n\nBase branch: $CONTINUOUS_BRANCH_BASE\nContinuous branch: $CONTINUOUS_BRANCH\n\nCommits:\n"
+    pr_body+="$(git log --oneline $CONTINUOUS_BRANCH_BASE..$CONTINUOUS_BRANCH 2>/dev/null || echo 'Unable to retrieve commits')"
+    
+    local pr_output
+    local pr_number=""
+    
+    if [ "$REPO_CLI" = "gh" ]; then
+        if ! pr_output=$(gh pr create --repo "$GITHUB_OWNER/$GITHUB_REPO" --title "$pr_title" --body "$pr_body" --base "$CONTINUOUS_BRANCH_BASE" 2>&1); then
+            echo "⚠️  Failed to create PR: $pr_output" >&2
+            return 1
+        fi
+        pr_number=$(echo "$pr_output" | grep -oE '(pull/|#)[0-9]+' | grep -oE '[0-9]+' | head -n 1)
+    else
+        if ! pr_output=$(az repos pr create --org "$AZURE_ORG" --project "$AZURE_PROJECT" --repository "$AZURE_REPO" --source-branch "$CONTINUOUS_BRANCH" --target-branch "$CONTINUOUS_BRANCH_BASE" --title "$pr_title" --description "$pr_body" --output json 2>&1); then
+            echo "⚠️  Failed to create PR: $pr_output" >&2
+            return 1
+        fi
+        pr_number=$(echo "$pr_output" | jq -r '.pullRequestId // empty' 2>/dev/null)
+    fi
+    
+    if [ -z "$pr_number" ]; then
+        echo "⚠️  Failed to extract PR number from output" >&2
+        return 1
+    fi
+    
+    echo "✅ Pull request created: #$pr_number" >&2
+    echo "$pr_output" >&2
+    
+    return 0
+}
+
 show_completion_summary() {
     # Calculate elapsed time if start_time was set
     local elapsed_msg=""
@@ -1996,6 +2289,10 @@ main() {
     trap "rm -f $ERROR_LOG; cleanup_worktree" EXIT
     
     main_loop
+    
+    # Create PR for continuous branch if applicable
+    create_continuous_branch_pr
+    
     show_completion_summary
     
     # Cleanup worktree if requested

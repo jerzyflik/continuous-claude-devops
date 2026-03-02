@@ -1,45 +1,5 @@
 # CHANGELOG
 
-## [v0.14.4] - 2026-02-06
-
-### What's Changed
-
-- Add instruction files to prompt assembly (eca3b45)
-- Use refs/heads for Azure PR branches (8786e86)
-
-**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.3...v0.14.4
-
-
-## [v0.14.3] - 2026-01-21
-
-### What's Changed
-
-- Drop --project from Azure PR commands (23eb7bd)
-
-**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.2...v0.14.3
-
-
-## [v0.14.2] - 2026-01-20
-
-### What's Changed
-
-- Remove unsupported --project from Azure policy list (792651a)
-
-**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.1...v0.14.2
-
-
-## [v0.14.1] - 2026-01-07
-
-### What's Changed
-
-- Update README install URLs (5b9edff)
-- Clean up Azure branches on PR close (98a7a07)
-- :pencil: Update logo, link to license (5a5492f)
-- :pencil: Revise README to include logo (53d9493)
-
-**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.0...v0.14.1
-
-
 ## [v0.14.0] - 2025-11-30
 
 ### What's Changed
