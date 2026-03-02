@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [v0.14.5] - 2026-03-02
+
+### What's Changed
+
+- Option for running on a single branch, commit after long job is done (ccd3631)
+- Pause and retry with delay when limit is reached (a91b0b4)
+- Add agents flag support (0a55a36)
+- Add flag to skip PR checks and merge (93fc3df)
+- Complete on pending review. (8de9149)
+- Correct usage of --project flag (f077e34)
+- Quit when errors. (4ff9f59)
+- Merge pull request #4 from jerzyflik/codex/fix-unrecognized-arguments-error-for-pr-policy-c14j60 (33c69fd)
+- Revert "Merge pull request #4 from jerzyflik/codex/fix-unrecognized-arguments-error-for-pr-policy-c14j60"This reverts commit 49f606ff646acc939df55c68615838fdcab53de8, reversingchanges made to 23eb7bd7508f3ddd9c2e6cbc51b50b336001703e.# Conflicts:#	CHANGELOG.md#	continuous_claude.sh#	continuous_claude.sh.sha256Revert "Drop --project from Azure PR commands"This reverts commit 23eb7bd7508f3ddd9c2e6cbc51b50b336001703e.Revert "Remove unsupported --project from Azure policy list"This reverts commit 792651a485703c5858c8a72a132eef19edae6518. (c118ab5)
+
+**Full Changelog**: https://github.com/jerzyflik/continuous-claude-devops/compare/v0.14.4...v0.14.5
+
+
 ## [v0.14.0] - 2025-11-30
 
 ### What's Changed
